@@ -7,16 +7,19 @@ in a minute"* and the page checks again every 30 s, then redirects on its own on
 Vanilla HTML/JS, no build step. Uses only free GitHub Pages and GitHub Actions.
 
 - **Repo:** https://github.com/riannom/nomura_html
-- **Viewer link:** https://riannom.github.io/nomura_html/
-- **Admin page:** https://riannom.github.io/nomura_html/admin.html
+- **Landing page:** https://nomura.network/ (also https://riannom.github.io/nomura_html/)
+- **Viewer link:** https://nomura.network/COL/ (`/col/` redirects there; paths are case-sensitive)
+- **Admin page:** https://nomura.network/COL/admin.html
 - **No-token fallback:** https://github.com/riannom/nomura_html/actions/workflows/update-stream.yml (Run workflow)
 
 | File | Purpose |
 |---|---|
-| `index.html` | Viewer page. Fetches `stream.json` (cache-busted), checks the URL and redirects or waits. |
-| `admin.html` | Streamer page. Takes a URL, a status and a token, then sends a `repository_dispatch` to the GitHub API. |
-| `stream.json` | `{"url": "...", "status": "live"\|"interrupted", "updated": "<ISO time>"}` |
-| `.github/workflows/update-stream.yml` | Checks the input, writes `stream.json` with `jq`, commits it and deploys Pages. |
+| `index.html` | Root landing page for nomura.network, with a button to `COL/`. |
+| `COL/index.html` | Viewer page. Embeds the YouTube stream from `COL/stream.json` (polled every 30 s) and shows a configurable placeholder when not live (edit the `PLACEHOLDER` block at the top). |
+| `COL/admin.html` | Streamer page. Takes a URL, a status and a token, then sends a `repository_dispatch` to the GitHub API. |
+| `col/index.html` | Redirects lowercase `/col/` to `/COL/` (keeps the query string). |
+| `COL/stream.json` | `{"url": "...", "status": "live"\|"interrupted", "updated": "<ISO time>"}` |
+| `.github/workflows/update-stream.yml` | Checks the input, writes `COL/stream.json` with `jq`, commits it and deploys Pages (root `index.html`, `COL/`, `col/`, `.nojekyll`). |
 | `CNAME.example` | Template for a custom domain. Rename it to `CNAME` once you pick a domain. |
 | `.nojekyll` | Turns off Jekyll processing. |
 
@@ -45,7 +48,7 @@ or you can just leave it on `live`.
 
 ## Updating the stream
 
-**Option A: admin page (token).** Open `https://<site>/admin.html`, paste the YouTube URL, choose
+**Option A: admin page (token).** Open `https://<site>/COL/admin.html`, paste the YouTube URL, choose
 `live` or `interrupted`, paste the token and press **Update stream**. GitHub answers `204` and the page
 shows a success message. You can tick *Remember on this device* to keep the token in that browser's
 `localStorage` (only on a device you trust). *Forget saved token* removes it.
@@ -58,33 +61,33 @@ Either way, viewers switch within **about a minute**: roughly 20–40 s for the 
 ### How it flows
 
 ```
-admin.html ──POST /repos/{owner}/{repo}/dispatches (event_type=update-stream, client_payload={url,status})──▶ GitHub
+COL/admin.html ──POST /repos/{owner}/{repo}/dispatches (event_type=update-stream, client_payload={url,status})──▶ GitHub
    or Actions "Run workflow" (workflow_dispatch inputs url,status)
         │
         ▼
 update-stream.yml (concurrency group "stream-update", runs one at a time)
   1. validate: status ∈ {live, interrupted}; url must be https://(www.|m.)youtube.com/… or https://youtu.be/…
      (empty url + interrupted keeps the previous url)
-  2. write stream.json with jq --arg (inputs come in via env vars, never ${{ }} in the script)
+  2. write COL/stream.json with jq --arg (inputs come in via env vars, never ${{ }} in the script)
   3. commit + push only if url/status changed
   4. upload-pages-artifact + deploy-pages (in the same run, because pushes made with GITHUB_TOKEN don't trigger other workflows)
         │
         ▼
-index.html polls stream.json?t=<now> with cache:'no-store' every 30 s → redirect when live
+COL/index.html polls stream.json?t=<now> with cache:'no-store' every 30 s → full-window player when live, placeholder otherwise
 ```
 
 A push to `main` (normal edits) also runs the workflow. It skips the update steps and just deploys.
 
-### Configuring owner/repo in admin.html
+### Configuring owner/repo in COL/admin.html
 
-In this repo they are already set at the top of `admin.html`:
+In this repo they are already set at the top of `COL/admin.html`:
 
 ```js
 var CONFIG = { owner: 'riannom', repo: 'nomura_html' };
 ```
 
-If you blank them (`''`), `admin.html` works them out from a `https://<owner>.github.io/<repo>/` URL on its own,
-but **with a custom domain it can't**, so keep them set.
+If you blank them (`''`), `COL/admin.html` works them out from a `https://<owner>.github.io/<repo>/COL/admin.html` URL on its own,
+but **with a custom domain (nomura.network) it can't**, so keep them set.
 
 ## Custom domain (CNAME)
 
@@ -97,13 +100,13 @@ but **with a custom domain it can't**, so keep them set.
      `185.199.111.153` (and optionally `AAAA` to `2606:50c0:8000::153`, `…8001::153`, `…8002::153`, `…8003::153`).
 3. Once the certificate is issued, tick **Enforce HTTPS**. You can verify the domain under your account's
    *Settings → Pages* to stop anyone else from taking it over.
-4. Set `CONFIG.owner` and `CONFIG.repo` in `admin.html` (see above).
+4. Set `CONFIG.owner` and `CONFIG.repo` in `COL/admin.html` (see above).
 
 ## Security notes
 
 - The token is never in the repo. It sits in the streamer's browser (only if *Remember* is ticked) and is
   sent only to `api.github.com`. The pages have a strict Content-Security-Policy and load no third-party scripts.
 - URLs are checked in three places: in the admin page (to help the user), in the workflow (this is the real gate)
-  and in `index.html` (only `https` on `youtube.com`, `www.`/`m.youtube.com` or `youtu.be`, with no credentials or ports).
-- `admin.html` is public but useless without a token. It's marked `noindex`.
+  and in `COL/index.html` (only `https` on `youtube.com`, `www.`/`m.youtube.com` or `youtu.be`, with no credentials or ports).
+- `COL/admin.html` is public but useless without a token. It's marked `noindex`.
 - Free-tier limits: Pages is public, and the GitHub Pages CDN caches for about 10 min, so the viewer adds `?t=` to its requests to skip the cache.

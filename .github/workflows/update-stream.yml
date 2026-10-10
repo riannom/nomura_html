@@ -42,7 +42,7 @@ jobs:
         with:
           ref: main
 
-      - name: Validate and write stream.json
+      - name: Validate and write COL/stream.json
         if: github.event_name != 'push'
         env:
           # Inputs arrive via env only; never interpolated into the script.
@@ -56,13 +56,13 @@ jobs:
             echo "::error::status must be 'live' or 'interrupted'"; exit 1
           fi
           if [[ -z "$url" && "$status" == "interrupted" ]]; then
-            url="$(jq -r '.url // ""' stream.json)"   # keep previous URL
+            url="$(jq -r '.url // ""' COL/stream.json)"   # keep previous URL
           fi
           re='^https://(www\.|m\.)?(youtube\.com|youtu\.be)/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]*$'
           if (( ${#url} > 500 )) || ! [[ "$url" =~ $re ]]; then
             echo "::error::url must be an https youtube.com or youtu.be link"; exit 1
           fi
-          old="$(jq -c '{url, status}' stream.json 2>/dev/null || echo '{}')"
+          old="$(jq -c '{url, status}' COL/stream.json 2>/dev/null || echo '{}')"
           new="$(jq -cn --arg url "$url" --arg status "$status" '{url: $url, status: $status}')"
           if [[ "$old" == "$new" ]]; then
             echo "No change in url/status; nothing to commit."
@@ -70,26 +70,28 @@ jobs:
           fi
           jq -n --arg url "$url" --arg status "$status" \
                 --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                '{url: $url, status: $status, updated: $updated}' > stream.json.tmp
-          mv stream.json.tmp stream.json
-          echo "stream.json is now:"; cat stream.json
+                '{url: $url, status: $status, updated: $updated}' > COL/stream.json.tmp
+          mv COL/stream.json.tmp COL/stream.json
+          echo "COL/stream.json is now:"; cat COL/stream.json
 
       - name: Commit if changed
         if: github.event_name != 'push'
         run: |
           set -euo pipefail
-          if git diff --quiet -- stream.json; then echo "Nothing to commit."; exit 0; fi
+          if git diff --quiet -- COL/stream.json; then echo "Nothing to commit."; exit 0; fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add stream.json
-          git commit -m "Update stream: $(jq -r .status stream.json)"
+          git add COL/stream.json
+          git commit -m "Update stream: $(jq -r .status COL/stream.json)"
           git push || { git pull --rebase origin main && git push; }
 
       - name: Stage site
         run: |
           set -euo pipefail
           mkdir -p _site
-          cp index.html admin.html stream.json .nojekyll _site/
+          # Root landing page, the stream site in COL/, and the lowercase col/ redirect
+          cp index.html .nojekyll _site/
+          cp -R COL col _site/
           if [[ -f CNAME ]]; then cp CNAME _site/; fi
 
       - uses: actions/configure-pages@v6

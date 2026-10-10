@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carolyn Nomura&#39;s Celebration of Life</title>
+<script>
+  // ======================= EDIT ONLY THIS BLOCK =======================
+  // What viewers see when the stream is NOT live (before it starts, or when
+  // the admin page is set to "interrupted").
+  const PLACEHOLDER = {
+    // Big heading text.
+    title: "Carolyn Nomura's Celebration of Life",
+    // Smaller text under the heading.
+    message: "The live stream will begin shortly. Please keep this page open; it will switch to the stream automatically.",
+    // Scheduled start, ISO format WITH the UTC offset (Hawaii is -10:00),
+    // e.g. "2026-10-10T14:00:00-10:00" for 2:00 PM Hawaii time.
+    // Leave "" if unknown (then the page simply shows the stream player, as before).
+    startTime: "",
+    // Show YouTube's own small "waiting" player on this screen before the start (true or false).
+    showWaitingPlayer: true,
+    // Page background color (any CSS color, e.g. "#000000" or "navy").
+    backgroundColor: "#111111",
+    // Text color.
+    textColor: "#f2f2f2",
+    // Optional background image URL (full https:// link). Leave "" for none.
+    backgroundImage: "",
+    // Optional link shown at the bottom. Leave both "" to hide it.
+    linkText: "",
+    linkUrl: ""
+  };
+
+  // Fallback YouTube channel ID (starts with "UC"), used only when stream.json has no usable video.
+  // Find yours in YouTube Studio: Settings > Channel > Advanced settings.
+  const CHANNEL_ID = "UCuElo0lPHVOnut0zSOM3oAw";
+  // ===================== END OF EDITABLE BLOCK ========================
+
+  // Testing helpers (add to the page URL, combine with &):
+  //   ?offline=1        always show the placeholder (no player)
+  //   ?video=<11-char>  use this YouTube video id instead of the one in stream.json
+  //                     (e.g. ?video=xxxxxxxxxxx to test the "video unavailable" path)
+  //   ?start=<ISO>      override startTime, e.g. ?start=2026-10-10T14:00:00-10:00
+  //   ?start=+15        override startTime to 15 minutes from now (-5 = 5 minutes ago)
+</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  [hidden] { display: none !important; }
+  #placeholder {
+    position: fixed; inset: 0; box-sizing: border-box;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 5vmin 6vw; text-align: center; overflow: hidden;
+    background-size: cover; background-position: center; background-repeat: no-repeat;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  #ph-title { margin: 0 0 0.5em; font-size: clamp(1.5rem, 5.5vw, 3.2rem); line-height: 1.15; font-weight: 600; max-width: 22em; overflow-wrap: anywhere; }
+  #ph-start { margin: 0; font-size: clamp(1rem, 3.4vw, 1.5rem); font-weight: 500; }
+  #ph-countdown { margin: 0.2em 0 0; font-size: clamp(1rem, 3.4vw, 1.5rem); font-variant-numeric: tabular-nums; opacity: 0.85; }
+  #ph-message { margin: 0.8em 0 0; font-size: clamp(0.95rem, 3vw, 1.3rem); line-height: 1.45; max-width: 36em; opacity: 0.9; overflow-wrap: anywhere; }
+  #ph-link { margin-top: 1.2em; font-size: clamp(1rem, 3vw, 1.2rem); color: inherit; text-decoration: underline; }
+  #placeholder.has-image > * { text-shadow: 0 1px 4px rgba(0,0,0,.8); }
+  /* One iframe container for both layouts; switching layout only changes CSS,
+     so the iframe is never re-inserted (re-inserting an iframe reloads it). */
+  #frame { flex: none; margin-top: 1.2em; width: min(88vw, 560px, 64vh); aspect-ratio: 16 / 9; background: #000; }
+  #frame.invisible { position: absolute; left: 0; top: 0; width: 320px; opacity: 0; pointer-events: none; margin: 0; }
+  #frame.full {
+    position: fixed; inset: 0; z-index: 10; margin: 0; width: auto; aspect-ratio: auto;
+    display: flex; align-items: center; justify-content: center; opacity: 1; pointer-events: auto;
+  }
+  #frame iframe { width: 100%; height: 100%; border: 0; display: block; }
+  #frame.full iframe { width: min(100vw, 177.78vh); height: auto; aspect-ratio: 16 / 9; }
+  body.mode-player #placeholder > :not(#frame) { visibility: hidden; }
+</style>
+</head>
+<body>
+<div id="placeholder">
+  <h1 id="ph-title"></h1>
+  <p id="ph-start" hidden></p>
+  <p id="ph-countdown" hidden></p>
+  <p id="ph-message"></p>
+  <div id="frame" hidden></div>
+  <a id="ph-link" target="_blank" rel="noopener" hidden></a>
+</div>
+<script>
+  const PARAMS = "autoplay=1&mute=1&playsinline=1&enablejsapi=1" +
+    (/^https?:$/.test(location.protocol) ? "&origin=" + encodeURIComponent(location.origin) : "");
+  const query = new URLSearchParams(location.search);
+  const FORCE_OFFLINE = query.get("offline") === "1";
+  const VIDEO_OVERRIDE = query.get("video") || "";
+  const ERROR_CODES = [2, 5, 100, 101, 150, 153];
+  const POLL_MS = 30000;
+  const FALLBACK_AFTER_START_MS = 2 * 60 * 1000;  // show full player anyway this long after startTime
+  const RETRY_ERRORED_MS = 60 * 1000;             // retry a source YouTube rejected after this long
+  const PLAYING = 1, BUFFERING = 3;
+
+  const START_MS = (function () {
+    const o = query.get("start");
+    if (o && /^[+-]\d+(\.\d+)?$/.test(o)) return Date.now() + parseFloat(o) * 60000;
+    const t = Date.parse(o || PLACEHOLDER.startTime || "");
+    return isNaN(t) ? null : t;
+  })();
+
+  const frame = document.getElementById("frame");
+  const ph = document.getElementById("placeholder");
+  const elStart = document.getElementById("ph-start");
+  const elCountdown = document.getElementById("ph-countdown");
+
+  // Per loaded iframe
+  let currentSrc = "", ytPlayer = null, loadToken = 0;
+  let confirmedLive = false;   // player reported PLAYING/BUFFERING of a live broadcast
+  let playableSeen = false;    // player reported the video is playable
+  let lastState = null;
+  let wasErrored = false;      // this load is a retry of a source that errored
+  let lastReload = 0;
+  let inspectPlayer = null;    // re-checks the current player's state (set by attachPlayer)
+  const errored = {};          // src -> time YouTube reported it unplayable
+  let lastStream = null;       // last {status, src} computed by refresh()
+
+  // ---- placeholder content (textContent only, never innerHTML) ----
+  (function setupPlaceholder() {
+    const c = PLACEHOLDER;
+    document.getElementById("ph-title").textContent = c.title || "";
+    document.getElementById("ph-message").textContent = c.message || "";
+    ph.style.backgroundColor = c.backgroundColor || "#000";
+    ph.style.color = c.textColor || "#fff";
+    if (c.backgroundImage) {
+      ph.style.backgroundImage = "linear-gradient(rgba(0,0,0,.45), rgba(0,0,0,.45)), url(" + JSON.stringify(String(c.backgroundImage)) + ")";
+      ph.classList.add("has-image");
+    }
+    const a = document.getElementById("ph-link");
+    if (c.linkText && /^https?:\/\//i.test(c.linkUrl || "")) {
+      a.textContent = c.linkText;
+      a.href = c.linkUrl;
+      a.hidden = false;
+    }
+    if (START_MS !== null) {
+      let when;
+      try {
+        when = new Date(START_MS).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+      } catch (e) { when = new Date(START_MS).toString(); }
+      elStart.textContent = "Starts " + when;
+      elStart.hidden = false;
+      elCountdown.hidden = false;
+      tickCountdown();
+      setInterval(tickCountdown, 1000);
+    }
+  })();
+
+  function tickCountdown() {
+    const left = Math.round((START_MS - Date.now()) / 1000);
+    if (left <= 0) { elCountdown.textContent = "Starting soon\u2026"; return; }
+    const d = Math.floor(left / 86400), h = Math.floor(left % 86400 / 3600), m = Math.floor(left % 3600 / 60), s = left % 60;
+    const pad = n => String(n).padStart(2, "0");
+    elCountdown.textContent = "Begins in " + (d ? d + "d " : "") + (d || h ? h + "h " : "") + pad(m) + "m " + pad(s) + "s";
+  }
+
+  function videoId(url) {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.replace(/^(www\.|m\.)/, "");
+      if (host === "youtu.be") return u.pathname.slice(1).split("/")[0];
+      if (host !== "youtube.com") return "";
+      if (u.searchParams.get("v")) return u.searchParams.get("v");
+      const m = u.pathname.match(/^\/(?:live|embed|shorts)\/([\w-]{11})/);
+      return m ? m[1] : "";
+    } catch (e) { return ""; }
+  }
+  const validId = id => /^[\w-]{11}$/.test(id);
+
+  // ---- YouTube IFrame Player API (optional: the page still works if it fails to load) ----
+  let apiReady = false;
+  window.onYouTubeIframeAPIReady = function () { apiReady = true; attachPlayer(); };
+  (function loadApi() {
+    const s = document.createElement("script");
+    s.src = "https://www.youtube.com/iframe_api";
+    s.async = true;
+    document.head.appendChild(s);
+  })();
+
+  function videoData() {
+    try { return (ytPlayer && ytPlayer.getVideoData && ytPlayer.getVideoData()) || {}; } catch (e) { return {}; }
+  }
+
+  function attachPlayer() {
+    const iframe = document.getElementById("player");
+    if (!apiReady || !iframe || ytPlayer) return;
+    const token = loadToken, src = currentSrc;
+    const mine = () => token === loadToken;
+    const unplayable = () => {
+      if (!mine()) return;
+      errored[src] = Date.now();
+      document.body.dataset.ytError = "1";
+      render();
+    };
+    const inspect = () => {
+      const d = videoData();
+      // Only an explicit "not playable" signal hides the player; when unsure, keep it.
+      if (d.isPlayable === false || (d.errorCode && d.errorCode !== 0)) { unplayable(); return; }
+      if (d.isPlayable === true) playableSeen = true;
+      if (lastState === PLAYING || lastState === BUFFERING) {
+        playableSeen = true;
+        // Live broadcast is running. (An ended stream's replay also reaches PLAYING,
+        // but with isLive false, so before startTime that does not count.)
+        if (d.isLive === true || (START_MS !== null && Date.now() >= START_MS)) confirmedLive = true;
+      }
+      document.body.dataset.ytIsLive = String(d.isLive);
+      render();
+    };
+    inspectPlayer = () => { if (mine() && ytPlayer) { try { lastState = ytPlayer.getPlayerState(); } catch (x) {} inspect(); } };
+    try {
+      ytPlayer = new YT.Player(iframe, {
+        events: {
+          onReady: e => { if (!mine()) return; document.body.dataset.ytReady = "1";
+            try { lastState = e.target.getPlayerState(); } catch (x) {} inspect(); },
+          onStateChange: e => { if (!mine()) return; lastState = e.data; document.body.dataset.ytState = String(e.data); inspect(); },
+          onError: e => { if (!mine()) return; document.body.dataset.ytErrorCode = String(e && e.data);
+            if (ERROR_CODES.includes(e && e.data)) unplayable(); }
+        }
+      });
+    } catch (e) { ytPlayer = null; }
+  }
+
+  // ---- player loading ----
+  function clearPlayer() {
+    loadToken++;
+    ytPlayer = null; inspectPlayer = null; currentSrc = ""; lastState = null;
+    confirmedLive = false; playableSeen = false; wasErrored = false;
+    frame.textContent = "";   // removes the iframe and stops playback
+  }
+
+  function loadPlayer(src) {
+    const retry = !!errored[src];
+    clearPlayer();
+    delete errored[src];
+    wasErrored = retry;
+    currentSrc = src;
+    lastReload = Date.now();
+    const iframe = document.createElement("iframe");
+    iframe.id = "player";
+    iframe.title = "Live stream";
+    iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
+    iframe.allowFullscreen = true;
+    iframe.referrerPolicy = "strict-origin-when-cross-origin";
+    iframe.src = src;
+    frame.appendChild(iframe);
+    attachPlayer();
+  }
+
+  // ---- decide what to show ----
+  function setMode(mode, reason) {
+    document.body.classList.toggle("mode-player", mode === "player");
+    document.body.dataset.state = mode;          // placeholder | waiting | player
+    document.body.dataset.reason = reason || "";
+    frame.hidden = mode === "placeholder";
+    frame.classList.toggle("full", mode === "player");
+    frame.classList.toggle("invisible", mode === "waiting" && !PLACEHOLDER.showWaitingPlayer);
+  }
+
+  function render() {
+    const s = lastStream;
+    if (!s) return;
+    if (s.mode === "placeholder") { clearPlayer(); setMode("placeholder", s.reason); return; }
+
+    const src = s.src;
+    if (src === currentSrc && errored[src]) { clearPlayer(); }   // just errored
+    if (errored[src]) {
+      if (Date.now() - errored[src] < RETRY_ERRORED_MS) { setMode("placeholder", "youtube-error"); return; }
+      loadPlayer(src);               // retry; shown small until YouTube says it's playable
+    } else if (src !== currentSrc) {
+      loadPlayer(src);               // unchanged src -> leave the iframe alone
+    }
+
+    const now = Date.now();
+    // Without a known startTime, or 2 min after it, show the full player even if
+    // we could not confirm it is live (e.g. muted autoplay blocked): never hide a real stream.
+    const allowUnconfirmed = START_MS === null || now >= START_MS + FALLBACK_AFTER_START_MS;
+    if (confirmedLive) { setMode("player", "confirmed-live"); return; }
+    if (allowUnconfirmed && (!wasErrored || playableSeen)) {
+      setMode("player", START_MS === null ? "no-start-time" : "start-time-fallback"); return;
+    }
+    setMode("waiting", wasErrored ? "retrying" : "before-start");
+  }
+
+  async function refresh() {
+    if (FORCE_OFFLINE) { lastStream = { mode: "placeholder", reason: "forced" }; render(); return; }
+    let s = null;
+    try {
+      const r = await fetch("stream.json?t=" + Date.now(), { cache: "no-store" });
+      if (r.ok) s = await r.json();
+    } catch (e) { s = null; }
+
+    if (s && typeof s === "object" && s.status !== "live") {
+      lastStream = { mode: "placeholder", reason: "status" };
+    } else {
+      const id = VIDEO_OVERRIDE || (s && typeof s.url === "string" ? videoId(s.url) : "");
+      if (validId(id)) lastStream = { mode: "video", src: "https://www.youtube.com/embed/" + id + "?" + PARAMS };
+      // No usable video id: try the channel's current live stream. If YouTube reports
+      // it unavailable (channel not live), onError switches to the placeholder.
+      else if (CHANNEL_ID) lastStream = { mode: "video", src: "https://www.youtube.com/embed/live_stream?channel=" + encodeURIComponent(CHANNEL_ID) + "&" + PARAMS };
+      else lastStream = { mode: "placeholder", reason: "no-source" };
+    }
+
+    // After startTime, while still waiting: cheap retry by reloading the small player
+    // every poll until it reaches PLAYING (YouTube's waiting room should also start by itself).
+    if (lastStream.mode === "video" && lastStream.src === currentSrc && START_MS !== null &&
+        Date.now() >= START_MS && !confirmedLive && document.body.dataset.state === "waiting" &&
+        lastState !== PLAYING && lastState !== BUFFERING && Date.now() - lastReload >= POLL_MS - 1000) {
+      loadPlayer(currentSrc);
+    } else if (inspectPlayer && lastStream.mode === "video" && lastStream.src === currentSrc) {
+      inspectPlayer();   // re-evaluate (e.g. startTime has now passed); calls render()
+      return;
+    }
+    render();
+  }
+
+  refresh();
+  setInterval(refresh, POLL_MS);
+  // Re-evaluate exactly at the fallback moment rather than waiting for the next poll.
+  if (START_MS !== null && START_MS + FALLBACK_AFTER_START_MS > Date.now())
+    setTimeout(() => (inspectPlayer ? inspectPlayer() : render()), START_MS + FALLBACK_AFTER_START_MS - Date.now() + 500);
+</script>
+</body>
+</html>
