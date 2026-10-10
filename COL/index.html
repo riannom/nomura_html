@@ -28,6 +28,8 @@
     showWaitingPlayer: true,
     // While live, keep the small subtitle and title above the video (true or false).
     liveShowHeader: true,
+    // Soft drifting points of light with faint threads in the background (true or false).
+    lights: true,
     // Base background color under the soft moving glow (any CSS color, e.g. "#000000" or "navy").
     backgroundColor: "#120a1f",
     // Text color.
@@ -80,6 +82,8 @@
     background: radial-gradient(circle, #2dd4bf 0%, #0d9488 45%, transparent 70%); animation: ph-d3 44s ease-in-out infinite alternate; }
   .ph-bg .g4 { width: 60vmax; height: 60vmax; right: -10vmax; bottom: -35vmax; opacity: .5;
     background: radial-gradient(circle, #2a1544 0%, #1a0f2e 60%, transparent 72%); animation: ph-d4 56s ease-in-out infinite alternate; }
+  /* Lights layer: soft points of light and faint threads (drawn by the script at the end) */
+  #placeholder > #lights { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; pointer-events: none; }
   #placeholder > .ph-vignette { position: absolute; inset: 0; z-index: 0; pointer-events: none;
     background: radial-gradient(ellipse at center, transparent 35%, rgba(6,3,12,.6) 100%); }
   @keyframes ph-d1 { to { transform: translate(14vw, 10vh) scale(1.1); } }
@@ -196,6 +200,7 @@
 <div id="placeholder">
   <div class="ph-bg" aria-hidden="true"><i class="g1"></i><i class="g2"></i><i class="g3"></i><i class="g4"></i></div>
   <div class="ph-vignette" aria-hidden="true"></div>
+  <canvas id="lights" aria-hidden="true"></canvas>
   <button id="fs-btn" type="button" aria-label="Full screen" title="Full screen">
     <svg class="ic-enter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
     <svg class="ic-exit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
@@ -509,6 +514,164 @@
   // Re-evaluate exactly at the fallback moment rather than waiting for the next poll.
   if (START_MS !== null && START_MS + FALLBACK_AFTER_START_MS > Date.now())
     setTimeout(() => (inspectPlayer ? inspectPlayer() : render()), START_MS + FALLBACK_AFTER_START_MS - Date.now() + 500);
+</script>
+<script>
+// ---- Background lights: slow, soft points of light with faint threads ----
+// Independent of the stream logic above. Dimmer behind the text and the video.
+(function () {
+  "use strict";
+  const canvas = document.getElementById("lights");
+  const ctx = PLACEHOLDER.lights && canvas.getContext && canvas.getContext("2d");
+  if (!ctx) { canvas.remove(); return; }
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const host = document.getElementById("placeholder");
+  // pale teal, soft lavender, and rare warm gold / rose accents
+  const COLORS = [[153, 246, 228], [196, 181, 253], [253, 224, 160], [251, 207, 232]];
+  const pickColor = () => { const r = Math.random(); return r < 0.5 ? 0 : r < 0.88 ? 1 : r < 0.95 ? 2 : 3; };
+  const CONTENT = ["ph-photo", "ph-kicker", "ph-title", "ph-live", "ph-start", "ph-countdown", "ph-message", "frame"];
+  let W = 0, H = 0, dpr = 1, linkDist = 150, nodes = [], pulses = [], lanterns = [], sprites = [];
+  let calm = null, live = false, raf = 0, last = 0, nextLantern = 0, lastKey = "";
+
+  // Pre-drawn glow sprites (one per color) keep drawing cheap
+  function makeSprites() {
+    sprites = COLORS.map(c => {
+      const s = document.createElement("canvas"), R = 32; s.width = s.height = R * 2;
+      const g = s.getContext("2d"), rg = g.createRadialGradient(R, R, 0, R, R, R);
+      rg.addColorStop(0, "rgba(255,255,255,1)");
+      rg.addColorStop(0.12, `rgba(${c[0]},${c[1]},${c[2]},.9)`);
+      rg.addColorStop(0.35, `rgba(${c[0]},${c[1]},${c[2]},.22)`);
+      rg.addColorStop(1, `rgba(${c[0]},${c[1]},${c[2]},0)`);
+      g.fillStyle = rg; g.fillRect(0, 0, R * 2, R * 2);
+      return s;
+    });
+  }
+  function makeNode() {
+    const a = Math.random() * 6.2832, sp = 0.0018 + Math.random() * 0.0032;   // px per ms (very slow)
+    return { x: Math.random() * W, y: Math.random() * H, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+             s: 7 + Math.random() * 7, c: pickColor(), ph: Math.random() * 6.2832, sp: 0.0003 + Math.random() * 0.0004 };
+  }
+  function setup() {
+    const r = host.getBoundingClientRect();
+    W = Math.max(1, r.width); H = Math.max(1, r.height);
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    linkDist = Math.max(110, Math.min(190, Math.sqrt(W * H) / 5.5));
+    const target = Math.round(Math.max(12, Math.min(30, W * H / 40000)));   // sparser than the home page
+    while (nodes.length < target) nodes.push(makeNode());
+    nodes.length = target;
+    nodes.forEach(n => { n.x = Math.min(n.x, W); n.y = Math.min(n.y, H); });
+    measure();
+  }
+  // Area to keep calm: the visible content (photo, title, text) or, while live, the video and header
+  function measure() {
+    live = document.body.classList.contains("mode-player");
+    const hr = host.getBoundingClientRect();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    CONTENT.forEach(id => {
+      const e = document.getElementById(id);
+      if (!e || e.hidden) return;
+      const r = e.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2 || getComputedStyle(e).opacity < 0.05) return;
+      x0 = Math.min(x0, r.left); y0 = Math.min(y0, r.top); x1 = Math.max(x1, r.right); y1 = Math.max(y1, r.bottom);
+    });
+    calm = x0 === Infinity ? null : { x0: x0 - hr.left, y0: y0 - hr.top, x1: x1 - hr.left, y1: y1 - hr.top };
+  }
+  // 1 far from the content, low inside it
+  function calmFactor(x, y) {
+    if (!calm) return 1;
+    const dx = Math.max(calm.x0 - x, 0, x - calm.x1), dy = Math.max(calm.y0 - y, 0, y - calm.y1);
+    const d = Math.sqrt(dx * dx + dy * dy), inside = live ? 0.05 : 0.18, edge = live ? 60 : 110;
+    return d >= edge ? 1 : inside + (1 - inside) * (d / edge);
+  }
+
+  function step(dt, now) {
+    for (const n of nodes) {
+      n.x += n.vx * dt; n.y += n.vy * dt; n.ph += n.sp * dt;
+      if (n.x < -30) n.x = W + 30; else if (n.x > W + 30) n.x = -30;
+      if (n.y < -30) n.y = H + 30; else if (n.y > H + 30) n.y = -30;
+    }
+    // A rare, gentle glow travelling along a thread
+    if (pulses.length < 2 && Math.random() < dt / 9000) {
+      const a = nodes[(Math.random() * nodes.length) | 0];
+      let best = null, bd = linkDist * 0.9;
+      for (const b of nodes) { if (b === a) continue; const d = Math.hypot(a.x - b.x, a.y - b.y); if (d < bd) { bd = d; best = b; } }
+      if (best) pulses.push({ a: a, b: best, t: 0 });
+    }
+    for (let k = pulses.length - 1; k >= 0; k--) { pulses[k].t += dt / 3200; if (pulses[k].t >= 1) pulses.splice(k, 1); }
+    // Very rarely, a warm light rises slowly and fades, like a lantern
+    if (!nextLantern) nextLantern = now + 15000 + Math.random() * 20000;
+    if (now > nextLantern && lanterns.length < 1) {
+      lanterns.push({ x: W * (0.08 + Math.random() * 0.84), y: H * (0.6 + Math.random() * 0.3), t: 0, c: Math.random() < 0.6 ? 2 : 3 });
+      nextLantern = now + 30000 + Math.random() * 30000;
+    }
+    for (let k = lanterns.length - 1; k >= 0; k--) { lanterns[k].t += dt / 14000; if (lanterns[k].t >= 1) lanterns.splice(k, 1); }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const master = live ? 0.55 : 1;
+    ctx.lineWidth = 0.6;
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i];
+      for (let j = i + 1; j < nodes.length; j++) {
+        const b = nodes[j], dx = a.x - b.x, dy = a.y - b.y;
+        if (Math.abs(dx) > linkDist || Math.abs(dy) > linkDist) continue;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d >= linkDist) continue;
+        const t = 1 - d / linkDist;
+        const alpha = t * t * 0.22 * master * Math.min(calmFactor(a.x, a.y), calmFactor(b.x, b.y));
+        if (alpha < 0.004) continue;
+        const ca = COLORS[a.c], cb = COLORS[b.c], g = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+        g.addColorStop(0, `rgba(${ca[0]},${ca[1]},${ca[2]},${alpha.toFixed(3)})`);
+        g.addColorStop(1, `rgba(${cb[0]},${cb[1]},${cb[2]},${alpha.toFixed(3)})`);
+        ctx.strokeStyle = g;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+    }
+    for (const n of nodes) {
+      const breathe = 0.5 + 0.3 * Math.sin(n.ph);
+      ctx.globalAlpha = Math.max(0, breathe * master * calmFactor(n.x, n.y));
+      ctx.drawImage(sprites[n.c], n.x - n.s, n.y - n.s, n.s * 2, n.s * 2);
+    }
+    for (const q of pulses) {
+      const x = q.a.x + (q.b.x - q.a.x) * q.t, y = q.a.y + (q.b.y - q.a.y) * q.t;
+      ctx.globalAlpha = Math.sin(q.t * Math.PI) * 0.5 * master * calmFactor(x, y);
+      ctx.drawImage(sprites[0], x - 7, y - 7, 14, 14);
+    }
+    for (const l of lanterns) {
+      const y = l.y - l.t * 110, x = l.x + Math.sin(l.t * 6) * 6;
+      ctx.globalAlpha = Math.sin(l.t * Math.PI) * 0.55 * master * calmFactor(x, y);
+      ctx.drawImage(sprites[l.c], x - 10, y - 10, 20, 20);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function frame(now) {
+    const dt = last ? Math.min(now - last, 64) : 16; last = now;
+    step(dt, now); draw();
+    raf = requestAnimationFrame(frame);
+  }
+  function start() { if (!raf && !reduce && !document.hidden) { last = 0; raf = requestAnimationFrame(frame); } }
+  function stop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
+
+  makeSprites(); setup(); draw();
+  // Keep the calm area up to date as the page switches between states (and through layout transitions)
+  setInterval(function () {
+    measure();
+    if (reduce) {   // reduced motion: static picture, redrawn only when the layout changes
+      const key = JSON.stringify(calm) + live;
+      if (key !== lastKey) { lastKey = key; draw(); }
+    }
+  }, 500);
+  let resizeT = 0;
+  const onResize = function () { clearTimeout(resizeT); resizeT = setTimeout(function () { setup(); draw(); }, 150); };
+  window.addEventListener("resize", onResize);
+  document.addEventListener("fullscreenchange", onResize);
+  document.addEventListener("webkitfullscreenchange", onResize);
+  document.addEventListener("visibilitychange", function () { if (document.hidden) stop(); else start(); });
+  start();
+})();
 </script>
 </body>
 </html>
