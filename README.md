@@ -16,7 +16,7 @@ Vanilla HTML/JS, no build step. Uses only free GitHub Pages and GitHub Actions.
 |---|---|
 | `index.html` | Root landing page for nomura.network, with a button to `COL/`. |
 | `COL/index.html` | Viewer page. Embeds the YouTube stream from `COL/stream.json` (polled every 30 s) and shows a configurable placeholder when not live (edit the `PLACEHOLDER` block at the top). Preview layouts with `?preview=live|waiting|transition&video=<id>`. Its own full-screen button keeps the themed look; on iPhone Safari (no element full screen) YouTube's native full-screen button is used instead. |
-| `COL/carolyn.webp`, `COL/carolyn.png` | Round photo on the placeholder (`PLACEHOLDER.photo`; the .png is the fallback). |
+| `COL/carolyn.webp`, `COL/carolyn.jpg` | Round photo on the placeholder (`PLACEHOLDER.photo`; the .jpg is the fallback). |
 | `COL/admin.html` | Streamer page. Takes a URL, a status and a token, then sends a `repository_dispatch` to the GitHub API. |
 | `col/index.html` | Redirects lowercase `/col/` to `/COL/` (keeps the query string). |
 | `COL/stream.json` | `{"url": "..." or "" (cleared), "status": "live"\|"interrupted", "updated": "<ISO time>"}` |

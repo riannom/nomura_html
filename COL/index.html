@@ -9,7 +9,7 @@
   // What viewers see when the stream is NOT live (before it starts, or when
   // the admin page is set to "interrupted").
   const PLACEHOLDER = {
-    // Round photo above the heading (file in the COL folder). A .png with the same
+    // Round photo above the heading (file in the COL folder). A .jpg with the same
     // name is used as a fallback for older browsers. Leave "" to hide it.
     photo: "carolyn.webp",
     // Small line above the heading. Leave "" to hide it.
@@ -276,7 +276,7 @@
         src.type = "image/webp";
         src.srcset = c.photo;
         pic.appendChild(src);
-        img.src = c.photo.replace(/\.webp$/i, ".png");
+        img.src = c.photo.replace(/\.webp$/i, ".jpg");
       } else img.src = c.photo;
       pic.appendChild(img);
       box.appendChild(pic);
