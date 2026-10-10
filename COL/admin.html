@@ -17,6 +17,7 @@
   .row{display:flex;align-items:center;gap:.5rem;margin-top:.5rem;font-weight:400}
   button{width:100%;margin-top:1.2rem;padding:.8rem;border:0;border-radius:.5rem;background:#e33;color:#fff;font-size:1.05rem;font-weight:600}
   button:disabled{opacity:.6}
+  button.secondary{background:transparent;border:1px solid #666;color:#ddd;margin-top:.7rem;font-size:.95rem;font-weight:500}
   .link{background:none;color:#8ab4f8;width:auto;padding:0;margin:0;font-size:.9rem;font-weight:400}
   #result{margin-top:1rem;padding:.75rem;border-radius:.5rem;display:none;white-space:pre-line}
   #result.ok{display:block;background:#123d1f;color:#bff5cc}
@@ -34,7 +35,7 @@
   <form id="f" autocomplete="off">
     <label for="url">YouTube URL</label>
     <input id="url" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…" >
-    <small>Optional when setting “interrupted” (the previous URL is kept).</small>
+    <small>Optional when setting “interrupted” (the previous URL is kept). To remove it entirely, use “Clear stream URL” below.</small>
 
     <label for="status">Status</label>
     <select id="status">
@@ -49,6 +50,8 @@
     <small>Fine-grained token for this one repo only, permission “Contents: Read and write”. Never shared with anyone except api.github.com.</small>
 
     <button id="go" type="submit">Update stream</button>
+    <button id="clear" type="button" class="secondary">Clear stream URL</button>
+    <small>Clears the URL (status becomes “interrupted”). Viewers see the placeholder page until a new URL is set.</small>
   </form>
   <div id="result" role="status" aria-live="polite"></div>
 
@@ -116,7 +119,7 @@
   fetch('stream.json?t=' + Date.now(), { cache: 'no-store' })
     .then(function (r) { return r.json(); })
     .then(function (d) {
-      $('current').textContent = 'Current: ' + d.status + ' · ' + d.url + ' · updated ' + d.updated;
+      $('current').textContent = 'Current: ' + d.status + ' · ' + (d.url || '(no URL)') + ' · updated ' + d.updated;
       if (d.url) $('url').value = d.url;
     })
     .catch(function () { $('current').textContent = 'Current: unavailable'; });
@@ -125,11 +128,21 @@
     ev.preventDefault();
     var url = $('url').value.trim();
     var status = $('status').value;
-    var token = $('token').value.trim();
-    if (!repo) return show(false, 'Repository not configured (see CONFIG in admin.html).');
     if (status !== 'live' && status !== 'interrupted') return show(false, 'Pick a status.');
     if (url && !validYouTubeUrl(url)) return show(false, 'That is not an https YouTube link (youtube.com or youtu.be).');
     if (!url && status === 'live') return show(false, 'A YouTube URL is required when going live.');
+    send({ url: url, status: status }, 'Update accepted (' + status + ').');
+  };
+
+  // Explicit clear: the workflow writes url "" (any URL in the field is ignored).
+  $('clear').onclick = function () {
+    if (!window.confirm('Clear the stream URL? Viewers will see the placeholder until a new URL is set.')) return;
+    send({ url: '', status: 'interrupted', clear: true }, 'Clear accepted: the stream URL is being removed.');
+  };
+
+  function send(payload, okText) {
+    var token = $('token').value.trim();
+    if (!repo) return show(false, 'Repository not configured (see CONFIG in admin.html).');
     if (!token) return show(false, 'Paste your access token (or use the Actions link below).');
 
     try {
@@ -137,7 +150,7 @@
       else localStorage.removeItem(TOKEN_KEY);
     } catch (e) {}
 
-    $('go').disabled = true;
+    $('go').disabled = $('clear').disabled = true;
     show(true, 'Sending…');
     fetch('https://api.github.com/repos/' + encodeURIComponent(repo.owner) + '/' + encodeURIComponent(repo.repo) + '/dispatches', {
       method: 'POST',
@@ -147,10 +160,11 @@
         'X-GitHub-Api-Version': '2022-11-28',
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ event_type: EVENT_TYPE, client_payload: { url: url, status: status } })
+      body: JSON.stringify({ event_type: EVENT_TYPE, client_payload: payload })
     }).then(function (r) {
       if (r.status === 204) {
-        show(true, 'Update accepted (' + status + ').\nGitHub is publishing it now; viewers switch within about a minute (deploy time + 30 s poll).');
+        if (payload.clear) $('url').value = '';
+        show(true, okText + '\nGitHub is publishing it now; viewers switch within about a minute (deploy time + 30 s poll).');
         return;
       }
       var hint = {
@@ -165,8 +179,8 @@
       });
     }).catch(function () {
       show(false, 'Network error: could not reach api.github.com. Check your connection and try again.');
-    }).then(function () { $('go').disabled = false; });
-  };
+    }).then(function () { $('go').disabled = $('clear').disabled = false; });
+  }
 })();
 </script>
 </body>

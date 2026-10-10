@@ -13,10 +13,12 @@
     title: "Carolyn Nomura's Celebration of Life",
     // Smaller text under the heading.
     message: "The live stream will begin shortly. Please keep this page open; it will switch to the stream automatically.",
+    // Text shown instead of "message" while no stream URL is set (cleared on the admin page).
+    noStreamMessage: "The live stream begins Saturday, October 17 at 10:00 AM HST.",
     // Scheduled start, ISO format WITH the UTC offset (Hawaii is -10:00),
     // e.g. "2026-10-10T14:00:00-10:00" for 2:00 PM Hawaii time.
     // Leave "" if unknown (then the page simply shows the stream player, as before).
-    startTime: "",
+    startTime: "2026-10-17T10:00:00-10:00",
     // Show YouTube's own small "waiting" player on this screen before the start (true or false).
     showWaitingPlayer: true,
     // Page background color (any CSS color, e.g. "#000000" or "navy").
@@ -103,6 +105,7 @@
   const ph = document.getElementById("placeholder");
   const elStart = document.getElementById("ph-start");
   const elCountdown = document.getElementById("ph-countdown");
+  const elMessage = document.getElementById("ph-message");
 
   // Per loaded iframe
   let currentSrc = "", ytPlayer = null, loadToken = 0;
@@ -119,7 +122,7 @@
   (function setupPlaceholder() {
     const c = PLACEHOLDER;
     document.getElementById("ph-title").textContent = c.title || "";
-    document.getElementById("ph-message").textContent = c.message || "";
+    elMessage.textContent = c.message || "";
     ph.style.backgroundColor = c.backgroundColor || "#000";
     ph.style.color = c.textColor || "#fff";
     if (c.backgroundImage) {
@@ -250,6 +253,8 @@
     document.body.classList.toggle("mode-player", mode === "player");
     document.body.dataset.state = mode;          // placeholder | waiting | player
     document.body.dataset.reason = reason || "";
+    // No stream URL set yet: show the "begins on ..." text instead of the normal message.
+    elMessage.textContent = (reason === "no-url" && PLACEHOLDER.noStreamMessage) ? PLACEHOLDER.noStreamMessage : (PLACEHOLDER.message || "");
     frame.hidden = mode === "placeholder";
     frame.classList.toggle("full", mode === "player");
     frame.classList.toggle("invisible", mode === "waiting" && !PLACEHOLDER.showWaitingPlayer);
@@ -288,7 +293,10 @@
       if (r.ok) s = await r.json();
     } catch (e) { s = null; }
 
-    if (s && typeof s === "object" && s.status !== "live") {
+    if (!VIDEO_OVERRIDE && s && typeof s === "object" && !(typeof s.url === "string" && s.url.trim())) {
+      // URL cleared on the admin page: placeholder only (no video, no channel fallback).
+      lastStream = { mode: "placeholder", reason: "no-url" };
+    } else if (s && typeof s === "object" && s.status !== "live") {
       lastStream = { mode: "placeholder", reason: "status" };
     } else {
       const id = VIDEO_OVERRIDE || (s && typeof s.url === "string" ? videoId(s.url) : "");

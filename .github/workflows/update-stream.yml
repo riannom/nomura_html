@@ -8,9 +8,14 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: "YouTube URL (https://www.youtube.com/... or https://youtu.be/...). Optional for 'interrupted'."
+        description: "YouTube URL (https://www.youtube.com/... or https://youtu.be/...). Optional for 'interrupted' (empty keeps the previous URL). Ignored when 'clear' is ticked."
         required: false
         type: string
+      clear:
+        description: "Clear the stream URL (writes an empty url; viewers see the placeholder)"
+        required: false
+        type: boolean
+        default: false
       status:
         description: "Stream status"
         required: true
@@ -48,6 +53,7 @@ jobs:
           # Inputs arrive via env only; never interpolated into the script.
           IN_URL: ${{ github.event.client_payload.url || inputs.url }}
           IN_STATUS: ${{ github.event.client_payload.status || inputs.status }}
+          IN_CLEAR: ${{ github.event.client_payload.clear || inputs.clear }}
         run: |
           set -euo pipefail
           url="$IN_URL"
@@ -55,12 +61,20 @@ jobs:
           if [[ "$status" != "live" && "$status" != "interrupted" ]]; then
             echo "::error::status must be 'live' or 'interrupted'"; exit 1
           fi
-          if [[ -z "$url" && "$status" == "interrupted" ]]; then
-            url="$(jq -r '.url // ""' COL/stream.json)"   # keep previous URL
+          if [[ "$IN_CLEAR" == "true" ]]; then
+            url=""                                          # explicit clear: empty url, nothing to validate
+          else
+            if [[ -z "$url" && "$status" == "interrupted" ]]; then
+              url="$(jq -r '.url // ""' COL/stream.json)"   # keep previous URL (may already be cleared)
+            elif [[ -z "$url" ]]; then
+              echo "::error::url is required for 'live' (to empty it, use clear)"; exit 1
+            fi
           fi
-          re='^https://(www\.|m\.)?(youtube\.com|youtu\.be)/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]*$'
-          if (( ${#url} > 500 )) || ! [[ "$url" =~ $re ]]; then
-            echo "::error::url must be an https youtube.com or youtu.be link"; exit 1
+          if [[ -n "$url" ]]; then
+            re='^https://(www\.|m\.)?(youtube\.com|youtu\.be)/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]*$'
+            if (( ${#url} > 500 )) || ! [[ "$url" =~ $re ]]; then
+              echo "::error::url must be an https youtube.com or youtu.be link (or use clear)"; exit 1
+            fi
           fi
           old="$(jq -c '{url, status}' COL/stream.json 2>/dev/null || echo '{}')"
           new="$(jq -cn --arg url "$url" --arg status "$status" '{url: $url, status: $status}')"
@@ -82,7 +96,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add COL/stream.json
-          git commit -m "Update stream: $(jq -r .status COL/stream.json)"
+          git commit -m "Update stream: $(jq -r 'if .url == "" then .status + " (url cleared)" else .status end' COL/stream.json)"
           git push || { git pull --rebase origin main && git push; }
 
       - name: Stage site

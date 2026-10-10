@@ -18,7 +18,7 @@ Vanilla HTML/JS, no build step. Uses only free GitHub Pages and GitHub Actions.
 | `COL/index.html` | Viewer page. Embeds the YouTube stream from `COL/stream.json` (polled every 30 s) and shows a configurable placeholder when not live (edit the `PLACEHOLDER` block at the top). |
 | `COL/admin.html` | Streamer page. Takes a URL, a status and a token, then sends a `repository_dispatch` to the GitHub API. |
 | `col/index.html` | Redirects lowercase `/col/` to `/COL/` (keeps the query string). |
-| `COL/stream.json` | `{"url": "...", "status": "live"\|"interrupted", "updated": "<ISO time>"}` |
+| `COL/stream.json` | `{"url": "..." or "" (cleared), "status": "live"\|"interrupted", "updated": "<ISO time>"}` |
 | `.github/workflows/update-stream.yml` | Checks the input, writes `COL/stream.json` with `jq`, commits it and deploys Pages (root `index.html`, `COL/`, `col/`, `.nojekyll`). |
 | `CNAME.example` | Template for a custom domain. Rename it to `CNAME` once you pick a domain. |
 | `.nojekyll` | Turns off Jekyll processing. |
@@ -56,18 +56,26 @@ shows a success message. You can tick *Remember on this device* to keep the toke
 **Option B: no token.** While logged into GitHub, use the link at the bottom of the admin page
 (*Actions → Update stream → Run workflow*), fill in `url` and `status`, and press **Run workflow**.
 
+**Clearing the URL.** When there is no stream link yet, press **Clear stream URL** on the admin page
+(or tick **clear** in *Run workflow*). The workflow writes `"url": ""` and status `interrupted` (from the admin page;
+*Run workflow* keeps the status you pick). While the URL is empty, `COL/index.html` shows only the placeholder with
+`PLACEHOLDER.noStreamMessage` and the countdown to `PLACEHOLDER.startTime`. It doesn't load any video or the channel fallback.
+Semantics: `clear: true` always means "empty the URL". Without it, an empty URL with `interrupted` keeps the previous
+URL (which may already be empty), and an empty URL with `live` is rejected.
+
 Either way, viewers switch within **about a minute**: roughly 20–40 s for the workflow and deploy, plus up to 30 s for the next poll.
 
 ### How it flows
 
 ```
-COL/admin.html ──POST /repos/{owner}/{repo}/dispatches (event_type=update-stream, client_payload={url,status})──▶ GitHub
-   or Actions "Run workflow" (workflow_dispatch inputs url,status)
+COL/admin.html ──POST /repos/{owner}/{repo}/dispatches (event_type=update-stream, client_payload={url,status[,clear]})──▶ GitHub
+   or Actions "Run workflow" (workflow_dispatch inputs url,status,clear)
         │
         ▼
 update-stream.yml (concurrency group "stream-update", runs one at a time)
   1. validate: status ∈ {live, interrupted}; url must be https://(www.|m.)youtube.com/… or https://youtu.be/…
-     (empty url + interrupted keeps the previous url)
+     clear=true writes url "" (no validation needed); otherwise empty url + interrupted keeps the previous url,
+     empty url + live is rejected
   2. write COL/stream.json with jq --arg (inputs come in via env vars, never ${{ }} in the script)
   3. commit + push only if url/status changed
   4. upload-pages-artifact + deploy-pages (in the same run, because pushes made with GITHUB_TOKEN don't trigger other workflows)
