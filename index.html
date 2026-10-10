@@ -22,31 +22,127 @@
   @keyframes d3 { 0% { transform: translate(0,0) scale(1); } 100% { transform: translate(-12vw,-16vh) scale(1.12); } }
   @keyframes d4 { 0% { transform: translate(0,0) scale(.95); } 100% { transform: translate(-26vw,-22vh) scale(1.2); } }
   .grain { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(ellipse at center, transparent 40%, rgba(5,3,10,.55) 100%); }
+  /* Network layer: sparse drifting nodes and faint links (drawn by the script below) */
+  #net { position: fixed; inset: 0; z-index: 1; width: 100%; height: 100%; pointer-events: none; }
   main { position: relative; z-index: 2; min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.1rem; padding: 6vmin 6vw; text-align: center; }
   h1 { margin: 0; font-weight: 300; letter-spacing: -.03em; font-size: clamp(2.6rem, 11vw, 6.5rem); line-height: 1; }
   h1 span { font-weight: 600; background: linear-gradient(90deg, var(--teal-2), var(--purple)); -webkit-background-clip: text; background-clip: text; color: transparent; }
   p { margin: 0; font-size: clamp(.95rem, 2.6vw, 1.1rem); letter-spacing: .02em; color: rgba(237,233,246,.72); }
-  .cta { margin-top: 1.6rem; display: inline-flex; flex-direction: column; align-items: center; gap: .2rem; padding: .95rem 1.6rem; max-width: 92vw;
-    border-radius: 999px; text-decoration: none; color: #fff; background: rgba(20,10,35,.38); border: 1px solid rgba(45,212,191,.55);
-    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 8px 30px rgba(10,5,20,.35), inset 0 0 0 1px rgba(168,85,247,.18);
-    transition: transform .2s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease; }
-  .cta strong { font-weight: 600; font-size: clamp(1rem, 3.4vw, 1.15rem); }
-  .cta small { font-size: clamp(.85rem, 2.8vw, .95rem); color: var(--teal-2); letter-spacing: .03em; }
-  .cta:hover { transform: translateY(-2px); background: rgba(124,58,237,.28); border-color: var(--purple); box-shadow: 0 12px 36px rgba(124,58,237,.35); }
-  .cta:focus-visible { outline: 2px solid var(--teal-2); outline-offset: 4px; }
-  @media (prefers-reduced-motion: reduce) { .blob { animation: none; } .cta { transition: none; } .cta:hover { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .blob { animation: none; } }
 </style>
 </head>
 <body>
 <div class="bg" aria-hidden="true"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div></div>
 <div class="grain" aria-hidden="true"></div>
+<canvas id="net" aria-hidden="true"></canvas>
 <main>
   <h1>nomura<span>.network</span></h1>
   <p>Something is taking shape.</p>
-  <a class="cta" href="COL/">
-    <strong>Carolyn Nomura&#39;s Celebration of Life</strong>
-    <small>Watch the stream &rarr;</small>
-  </a>
 </main>
+<script>
+(function () {
+  "use strict";
+  var canvas = document.getElementById("net");
+  var ctx = canvas.getContext && canvas.getContext("2d");
+  if (!ctx) return;
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var TEAL = [45, 212, 191], VIOLET = [168, 85, 247];
+  var nodes = [], pulses = [], W = 0, H = 0, dpr = 1, linkDist = 160, raf = 0, last = 0;
+  var pointer = null;
+
+  function setup() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    linkDist = Math.max(120, Math.min(210, Math.sqrt(W * H) / 5));
+    // Node count scales with screen area: about 16 on a phone, capped at 52 on large screens
+    var target = Math.round(Math.max(14, Math.min(52, W * H / 26000)));
+    while (nodes.length < target) nodes.push(makeNode());
+    nodes.length = target;
+    nodes.forEach(function (n) { n.x = Math.min(n.x, W); n.y = Math.min(n.y, H); });
+  }
+  function makeNode() {
+    var a = Math.random() * Math.PI * 2, sp = 0.004 + Math.random() * 0.008;   // px per ms (very slow)
+    return { x: Math.random() * W, y: Math.random() * H, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+             r: 1.2 + Math.random() * 1.4, c: Math.random() < 0.55 ? TEAL : VIOLET, ph: Math.random() * 6.28 };
+  }
+  function rgba(c, a) { return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a.toFixed(3) + ")"; }
+
+  function step(dt) {
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (pointer) {   // very slight drift toward the pointer when it is near
+        var dx = pointer.x - n.x, dy = pointer.y - n.y, d2 = dx * dx + dy * dy;
+        if (d2 < 40000 && d2 > 1) { n.x += dx * 0.00004 * dt; n.y += dy * 0.00004 * dt; }
+      }
+      n.x += n.vx * dt; n.y += n.vy * dt;
+      if (n.x < -20) n.x = W + 20; else if (n.x > W + 20) n.x = -20;
+      if (n.y < -20) n.y = H + 20; else if (n.y > H + 20) n.y = -20;
+      n.ph += dt * 0.0008;
+    }
+    // Occasionally send a faint pulse along an existing link
+    if (pulses.length < 3 && Math.random() < dt / 2600) {
+      var a = nodes[(Math.random() * nodes.length) | 0], best = null, bd = linkDist;
+      for (var j = 0; j < nodes.length; j++) {
+        var b = nodes[j]; if (b === a) continue;
+        var dd = Math.hypot(a.x - b.x, a.y - b.y); if (dd < bd) { bd = dd; best = b; }
+      }
+      if (best) pulses.push({ a: a, b: best, t: 0 });
+    }
+    for (var k = pulses.length - 1; k >= 0; k--) { pulses[k].t += dt / 1800; if (pulses[k].t >= 1) pulses.splice(k, 1); }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.lineWidth = 0.8;
+    for (var i = 0; i < nodes.length; i++) {
+      var a = nodes[i];
+      for (var j = i + 1; j < nodes.length; j++) {
+        var b = nodes[j], dx = a.x - b.x, dy = a.y - b.y;
+        if (Math.abs(dx) > linkDist || Math.abs(dy) > linkDist) continue;
+        var d = Math.sqrt(dx * dx + dy * dy);
+        if (d < linkDist) {
+          var t = 1 - d / linkDist, alpha = t * t * 0.42;
+          var g = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+          g.addColorStop(0, rgba(a.c, alpha)); g.addColorStop(1, rgba(b.c, alpha));
+          ctx.strokeStyle = g;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+      }
+    }
+    for (var k = 0; k < nodes.length; k++) {
+      var n = nodes[k], tw = 0.6 + 0.2 * Math.sin(n.ph);
+      ctx.fillStyle = rgba(n.c, tw);
+      ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 6.2832); ctx.fill();
+    }
+    for (var p = 0; p < pulses.length; p++) {
+      var q = pulses[p], x = q.a.x + (q.b.x - q.a.x) * q.t, y = q.a.y + (q.b.y - q.a.y) * q.t;
+      var fade = Math.sin(q.t * Math.PI) * 0.7;
+      var rg = ctx.createRadialGradient(x, y, 0, x, y, 6);
+      rg.addColorStop(0, rgba([204, 251, 241], fade)); rg.addColorStop(1, rgba(TEAL, 0));
+      ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(x, y, 6, 0, 6.2832); ctx.fill();
+    }
+  }
+
+  function frame(now) {
+    var dt = last ? Math.min(now - last, 64) : 16; last = now;
+    step(dt); draw();
+    raf = requestAnimationFrame(frame);
+  }
+  function start() { if (!raf && !reduce && !document.hidden) { last = 0; raf = requestAnimationFrame(frame); } }
+  function stop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
+
+  setup(); draw();   // reduced motion: this single static frame is all that is drawn
+  var resizeT = 0;
+  window.addEventListener("resize", function () { clearTimeout(resizeT); resizeT = setTimeout(function () { setup(); draw(); }, 150); });
+  document.addEventListener("visibilitychange", function () { if (document.hidden) stop(); else start(); });
+  if (!reduce) {
+    window.addEventListener("pointermove", function (e) { pointer = { x: e.clientX, y: e.clientY }; }, { passive: true });
+    window.addEventListener("pointerleave", function () { pointer = null; });
+    start();
+  }
+})();
+</script>
 </body>
 </html>
