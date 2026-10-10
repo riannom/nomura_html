@@ -9,6 +9,9 @@
   // What viewers see when the stream is NOT live (before it starts, or when
   // the admin page is set to "interrupted").
   const PLACEHOLDER = {
+    // Round photo above the heading (file in the COL folder). A .png with the same
+    // name is used as a fallback for older browsers. Leave "" to hide it.
+    photo: "carolyn.webp",
     // Small line above the heading. Leave "" to hide it.
     subtitle: "In loving memory",
     // Big heading text.
@@ -23,6 +26,8 @@
     startTime: "2026-10-17T10:00:00-10:00",
     // Show YouTube's own small "waiting" player on this screen before the start (true or false).
     showWaitingPlayer: true,
+    // While live, keep the small subtitle and title above the video (true or false).
+    liveShowHeader: true,
     // Base background color under the soft moving glow (any CSS color, e.g. "#000000" or "navy").
     backgroundColor: "#120a1f",
     // Text color.
@@ -45,6 +50,10 @@
   //                     (e.g. ?video=xxxxxxxxxxx to test the "video unavailable" path)
   //   ?start=<ISO>      override startTime, e.g. ?start=2026-10-10T14:00:00-10:00
   //   ?start=+15        override startTime to 15 minutes from now (-5 = 5 minutes ago)
+  //   ?preview=live&video=<id>        preview the live layout with that video (ignores stream.json)
+  //   ?preview=waiting&video=<id>     preview the pre-start screen with the small player
+  //   ?preview=transition&video=<id>  pre-start screen, then switches to the live layout after 8 seconds
+  //   (preview only works together with a valid ?video= id, so normal links never trigger it)
 </script>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
@@ -53,6 +62,8 @@
     position: fixed; inset: 0; box-sizing: border-box;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     padding: 5vmin 7vw; text-align: center; overflow: hidden;
+    --m: 1.25rem; --hdr: 6.6rem; --vh: 100vh;
+    transition: padding .9s cubic-bezier(.2,.7,.2,1);
     background-size: cover; background-position: center; background-repeat: no-repeat;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
@@ -76,8 +87,19 @@
   @keyframes ph-d3 { to { transform: translate(-16vw, -10vh) scale(1.15); } }
   @keyframes ph-d4 { to { transform: translate(-10vw, -8vh) scale(1.08); } }
 
-  #ph-kicker { margin: 0 0 1.1em; font-size: clamp(.7rem, 2.2vw, .85rem); letter-spacing: .32em; text-transform: uppercase; opacity: .7; padding-left: .32em; }
-  #ph-title { margin: 0; max-width: 18em; overflow-wrap: anywhere;
+  /* Round photo with a thin teal-to-violet ring and a soft glow */
+  #ph-photo { flex: none; box-sizing: border-box; width: clamp(96px, min(30vw, 19vh), 168px); aspect-ratio: 1; max-height: 200px;
+    margin: 0 0 1.5rem; padding: 2px; border-radius: 50%;
+    background: linear-gradient(140deg, #2dd4bf, #7c3aed 55%, #a78bfa);
+    box-shadow: 0 0 22px rgba(45,212,191,.18), 0 0 46px rgba(124,58,237,.22);
+    animation: ph-fade 2.4s ease-out backwards; }
+  #ph-photo picture { display: block; width: 100%; height: 100%; }
+  #ph-photo img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover;
+    background: radial-gradient(circle at 50% 40%, #2a1544, #160c26); }
+  @keyframes ph-fade { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+  @media (max-height: 560px) { #ph-photo { display: none !important; } }
+  #ph-kicker { margin: 0 0 1.1em; max-height: 4em; font-size: clamp(.7rem, 2.2vw, .85rem); letter-spacing: .32em; text-transform: uppercase; opacity: .7; padding-left: .32em; }
+  #ph-title { margin: 0; max-width: 18em; max-height: 6em; overflow-wrap: anywhere;
     font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
     font-weight: 400; font-size: clamp(1.9rem, 6.4vw, 3.6rem); line-height: 1.15; letter-spacing: .01em;
     text-shadow: 0 0 28px rgba(124,58,237,.25); }
@@ -94,42 +116,116 @@
   #ph-link { margin-top: 1.4em; font-size: clamp(.9rem, 2.6vw, 1rem); letter-spacing: .04em; color: #5eead4; text-decoration: none; border-bottom: 1px solid rgba(94,234,212,.45); padding-bottom: 2px; }
   #ph-link:hover, #ph-link:focus-visible { border-bottom-color: #5eead4; }
   #placeholder.has-image > * { text-shadow: 0 1px 4px rgba(0,0,0,.8); }
-  @media (prefers-reduced-motion: reduce) { #placeholder .ph-bg i, #placeholder > .ph-line { animation: none; } }
+  /* "Live" indicator (live layout only) */
+  #ph-live { margin: 0; max-height: 0; opacity: 0; overflow: hidden; font-size: .78rem; letter-spacing: .22em; text-transform: uppercase; color: #5eead4;
+    display: flex; align-items: center; gap: .55em; padding-left: .22em; }
+  #ph-live i { width: 6px; height: 6px; border-radius: 50%; background: #2dd4bf; box-shadow: 0 0 8px #2dd4bf; animation: ph-pulse 2.6s ease-in-out infinite; }
+  @keyframes ph-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+  /* Flexible spacers: their sizes animate so the layout glides between pre-start and live */
+  #placeholder > .sp { flex: 0 0 0; min-height: 0; }
+  #placeholder > .sp-top, #placeholder > .sp-bot { flex-grow: 1; }
+
   /* One iframe container for both layouts; switching layout only changes CSS,
      so the iframe is never re-inserted (re-inserting an iframe reloads it). */
   #frame { flex: none; margin-top: 1.8em; width: min(86vw, 560px, 60vh); aspect-ratio: 16 / 9; background: #000;
     border: 1px solid rgba(45,212,191,.4); border-radius: 10px; overflow: hidden;
     box-shadow: 0 0 0 5px rgba(45,212,191,.05), 0 0 36px rgba(45,212,191,.16), 0 24px 60px rgba(0,0,0,.45); }
   #frame.invisible { position: absolute; left: 0; top: 0; width: 320px; opacity: 0; pointer-events: none; margin: 0; z-index: 0; }
-  #frame.full {
-    position: fixed; inset: 0; z-index: 10; margin: 0; width: auto; aspect-ratio: auto;
-    border: 0; border-radius: 0; box-shadow: none;
-    display: flex; align-items: center; justify-content: center; opacity: 1; pointer-events: auto;
-  }
   #frame iframe { width: 100%; height: 100%; border: 0; display: block; }
-  #frame.full iframe { width: min(100vw, 177.78vh); height: auto; aspect-ratio: 16 / 9; }
-  body.mode-player #placeholder > :not(#frame) { visibility: hidden; }
+
+  /* Smooth changes between layouts */
+  #placeholder > .sp, #frame, #ph-photo, #ph-kicker, #ph-title, #placeholder > .ph-line, #ph-live, #ph-start, #ph-countdown, #ph-message, #ph-link {
+    transition: flex-grow .9s cubic-bezier(.2,.7,.2,1), width .9s cubic-bezier(.2,.7,.2,1), margin .9s cubic-bezier(.2,.7,.2,1),
+      font-size .9s cubic-bezier(.2,.7,.2,1), max-height .9s ease, opacity .6s ease, border-radius .9s ease; }
+  #ph-start, #ph-countdown { max-height: 4em; }
+  #ph-message, #ph-link { max-height: 12em; }
+
+  /* ---- Live layout: compact header on top, large framed video below ---- */
+  body.mode-player #placeholder { padding: var(--m); }
+  body.mode-player #placeholder > .sp-top { flex-grow: 0; }
+  body.mode-player #placeholder > .sp-mid { flex-grow: 1; }
+  body[data-state="waiting"] #ph-photo { width: clamp(80px, min(24vw, 14vh), 132px); margin-bottom: 1.1rem; }
+  body.mode-player #ph-photo { width: 0; max-height: 0; padding: 0; margin: 0; opacity: 0; box-shadow: none; }
+  body.mode-player #ph-kicker { margin: 0 0 .45rem; font-size: .66rem; }
+  body.mode-player #ph-title { font-size: clamp(1.05rem, 4.2vw, 1.45rem); max-width: none; }
+  body.mode-player #placeholder > .ph-line { margin: .55rem 0 .5rem; }
+  body.mode-player #ph-live { max-height: 2em; opacity: .9; }
+  body.mode-player #ph-start, body.mode-player #ph-countdown, body.mode-player #ph-message, body.mode-player #ph-link {
+    max-height: 0; opacity: 0; margin: 0; overflow: hidden; }
+  body.mode-player #frame.full { margin: .8rem 0 0; border-radius: 12px;
+    width: min(100vw - 2 * var(--m), (var(--vh) - var(--hdr) - 2 * var(--m)) * 16 / 9); }
+  /* Header hidden (config, or very short screens such as a phone in landscape) */
+  body.mode-player.no-live-header #placeholder, body.is-fs.no-live-header #placeholder { --hdr: 0px; }
+  body.mode-player.no-live-header #ph-kicker, body.mode-player.no-live-header #ph-title,
+  body.mode-player.no-live-header #placeholder > .ph-line, body.mode-player.no-live-header #ph-live {
+    max-height: 0; height: 0; opacity: 0; margin: 0; overflow: hidden; }
+  body.mode-player.no-live-header #frame.full { margin: 0; }
+  @media (max-width: 600px) {
+    #placeholder { --m: .6rem; --hdr: 7.4rem; }
+    body.mode-player #ph-title { padding: 0 2.6rem; }   /* keep clear of the full-screen button */
+  }
+  /* Portrait screens: video sits closer to the header instead of mid-screen */
+  @media (orientation: portrait) { body.mode-player #placeholder > .sp-mid { flex-grow: .35; } }
+  @media (max-height: 500px) {
+    #placeholder { --m: .4rem; --hdr: 0px; }
+    body.mode-player #ph-kicker, body.mode-player #ph-title, body.mode-player #placeholder > .ph-line, body.mode-player #ph-live {
+      max-height: 0; height: 0; opacity: 0; margin: 0; overflow: hidden; }
+    body.mode-player #frame.full { margin: 0; border-radius: 8px; }
+  }
+  @supports (height: 100dvh) { #placeholder { --vh: 100dvh; } }
+
+  /* Themed full screen (our button puts this whole page area into full screen) */
+  #fs-btn { display: none; position: absolute; top: .7rem; right: .7rem; z-index: 3; width: 2.4rem; height: 2.4rem; padding: 0;
+    align-items: center; justify-content: center; border-radius: 50%; cursor: pointer; color: #ccfbf1;
+    background: rgba(18,10,31,.45); border: 1px solid rgba(45,212,191,.35); opacity: .7;
+    transition: opacity .3s ease, border-color .3s ease, box-shadow .3s ease; }
+  #fs-btn:hover, #fs-btn:focus-visible { opacity: 1; border-color: #2dd4bf; box-shadow: 0 0 14px rgba(45,212,191,.35); outline: none; }
+  #fs-btn svg { width: 1.05rem; height: 1.05rem; }
+  #fs-btn .ic-exit, body.is-fs #fs-btn .ic-enter { display: none; }
+  body.is-fs #fs-btn .ic-exit { display: block; }
+  body.fs-ok.mode-player #fs-btn, body.is-fs #fs-btn { display: flex; }
+  body.is-fs #placeholder { --m: .6rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #placeholder .ph-bg i, #placeholder > .ph-line, #ph-live i, #ph-photo { animation: none; }
+    #placeholder, #placeholder > *, #frame { transition: none !important; }
+  }
 </style>
 </head>
 <body>
 <div id="placeholder">
   <div class="ph-bg" aria-hidden="true"><i class="g1"></i><i class="g2"></i><i class="g3"></i><i class="g4"></i></div>
   <div class="ph-vignette" aria-hidden="true"></div>
+  <button id="fs-btn" type="button" aria-label="Full screen" title="Full screen">
+    <svg class="ic-enter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+    <svg class="ic-exit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+  </button>
+  <div class="sp sp-top"></div>
+  <div id="ph-photo" hidden></div>
   <p id="ph-kicker" hidden></p>
   <h1 id="ph-title"></h1>
   <div class="ph-line" aria-hidden="true"></div>
+  <p id="ph-live"><i></i>Live</p>
   <p id="ph-start" hidden></p>
   <p id="ph-countdown" hidden></p>
   <p id="ph-message"></p>
+  <div class="sp sp-mid"></div>
   <div id="frame" hidden></div>
   <a id="ph-link" target="_blank" rel="noopener" hidden></a>
+  <div class="sp sp-bot"></div>
 </div>
 <script>
-  const PARAMS = "autoplay=1&mute=1&playsinline=1&enablejsapi=1" +
+  // Themed full screen: our button full-screens the whole page area. Where the browser can't
+  // full-screen a page element (iPhone Safari), keep YouTube's own full-screen button (fs=1).
+  const ph = document.getElementById("placeholder");
+  const FS_OK = !!((document.fullscreenEnabled && ph.requestFullscreen) || (document.webkitFullscreenEnabled && ph.webkitRequestFullscreen));
+  const PARAMS = "autoplay=1&mute=1&playsinline=1&enablejsapi=1&fs=" + (FS_OK ? "0" : "1") +
     (/^https?:$/.test(location.protocol) ? "&origin=" + encodeURIComponent(location.origin) : "");
   const query = new URLSearchParams(location.search);
   const FORCE_OFFLINE = query.get("offline") === "1";
   const VIDEO_OVERRIDE = query.get("video") || "";
+  const PREVIEW = ["live", "waiting", "transition"].includes(query.get("preview")) && /^[\w-]{11}$/.test(VIDEO_OVERRIDE) ? query.get("preview") : "";
+  const PREVIEW_T0 = Date.now();
   const ERROR_CODES = [2, 5, 100, 101, 150, 153];
   const POLL_MS = 30000;
   const FALLBACK_AFTER_START_MS = 2 * 60 * 1000;  // show full player anyway this long after startTime
@@ -144,7 +240,6 @@
   })();
 
   const frame = document.getElementById("frame");
-  const ph = document.getElementById("placeholder");
   const elStart = document.getElementById("ph-start");
   const elCountdown = document.getElementById("ph-countdown");
   const elMessage = document.getElementById("ph-message");
@@ -164,6 +259,24 @@
   (function setupPlaceholder() {
     const c = PLACEHOLDER;
     document.getElementById("ph-title").textContent = c.title || "";
+    if (c.photo) {
+      const box = document.getElementById("ph-photo");
+      const pic = document.createElement("picture");
+      const img = document.createElement("img");
+      img.alt = "Carolyn Nomura";
+      img.width = 168; img.height = 168;
+      img.decoding = "async";
+      if (/\.webp$/i.test(c.photo)) {
+        const src = document.createElement("source");
+        src.type = "image/webp";
+        src.srcset = c.photo;
+        pic.appendChild(src);
+        img.src = c.photo.replace(/\.webp$/i, ".png");
+      } else img.src = c.photo;
+      pic.appendChild(img);
+      box.appendChild(pic);
+      box.hidden = false;
+    }
     const kicker = document.getElementById("ph-kicker");
     if (c.subtitle) { kicker.textContent = c.subtitle; kicker.hidden = false; }
     elMessage.textContent = c.message || "";
@@ -199,6 +312,26 @@
     const pad = n => String(n).padStart(2, "0");
     elCountdown.textContent = "Begins in " + (d ? d + "d " : "") + (d || h ? h + "h " : "") + pad(m) + "m " + pad(s) + "s";
   }
+
+  // ---- layout options and full screen ----
+  if (!PLACEHOLDER.liveShowHeader) document.body.classList.add("no-live-header");
+  if (FS_OK) document.body.classList.add("fs-ok");
+  const fsBtn = document.getElementById("fs-btn");
+  const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+  fsBtn.addEventListener("click", function () {
+    try {
+      if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      else (ph.requestFullscreen || ph.webkitRequestFullscreen).call(ph);
+    } catch (e) {}
+  });
+  function onFsChange() {
+    const on = fsElement() === ph;
+    document.body.classList.toggle("is-fs", on);
+    fsBtn.setAttribute("aria-label", on ? "Exit full screen" : "Full screen");
+    fsBtn.title = on ? "Exit full screen" : "Full screen";
+  }
+  document.addEventListener("fullscreenchange", onFsChange);
+  document.addEventListener("webkitfullscreenchange", onFsChange);
 
   function videoId(url) {
     try {
@@ -318,6 +451,11 @@
       loadPlayer(src);               // unchanged src -> leave the iframe alone
     }
 
+    if (PREVIEW) {   // test-only layouts (see ?preview= above)
+      const live = PREVIEW === "live" || (PREVIEW === "transition" && Date.now() - PREVIEW_T0 >= 8000);
+      setMode(live ? "player" : "waiting", "preview-" + PREVIEW);
+      return;
+    }
     const now = Date.now();
     // Without a known startTime, or 2 min after it, show the full player even if
     // we could not confirm it is live (e.g. muted autoplay blocked): never hide a real stream.
@@ -331,6 +469,7 @@
 
   async function refresh() {
     if (FORCE_OFFLINE) { lastStream = { mode: "placeholder", reason: "forced" }; render(); return; }
+    if (PREVIEW) { lastStream = { mode: "video", src: "https://www.youtube.com/embed/" + VIDEO_OVERRIDE + "?" + PARAMS }; render(); return; }
     let s = null;
     try {
       const r = await fetch("stream.json?t=" + Date.now(), { cache: "no-store" });
@@ -366,6 +505,7 @@
 
   refresh();
   setInterval(refresh, POLL_MS);
+  if (PREVIEW === "transition") setTimeout(render, 8100);
   // Re-evaluate exactly at the fallback moment rather than waiting for the next poll.
   if (START_MS !== null && START_MS + FALLBACK_AFTER_START_MS > Date.now())
     setTimeout(() => (inspectPlayer ? inspectPlayer() : render()), START_MS + FALLBACK_AFTER_START_MS - Date.now() + 500);
