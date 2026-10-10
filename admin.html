@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self' https://api.github.com; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action 'none'">
+<title>Stream admin</title>
+<style>
+  body{margin:0;background:#0f0f10;color:#eee;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  main{max-width:32rem;margin:0 auto;padding:1.25rem}
+  h1{font-size:1.4rem;margin:.5rem 0 1rem}
+  label{display:block;margin:.9rem 0 .3rem;font-weight:600}
+  input[type=text],input[type=password],input[type=url],select{width:100%;box-sizing:border-box;padding:.65rem;
+    border-radius:.5rem;border:1px solid #444;background:#1b1b1d;color:#eee;font-size:1rem}
+  .row{display:flex;align-items:center;gap:.5rem;margin-top:.5rem;font-weight:400}
+  button{width:100%;margin-top:1.2rem;padding:.8rem;border:0;border-radius:.5rem;background:#e33;color:#fff;font-size:1.05rem;font-weight:600}
+  button:disabled{opacity:.6}
+  .link{background:none;color:#8ab4f8;width:auto;padding:0;margin:0;font-size:.9rem;font-weight:400}
+  #result{margin-top:1rem;padding:.75rem;border-radius:.5rem;display:none;white-space:pre-line}
+  #result.ok{display:block;background:#123d1f;color:#bff5cc}
+  #result.err{display:block;background:#4a1515;color:#ffd0d0}
+  small,.muted{color:#999}
+  a{color:#8ab4f8}
+  hr{border:0;border-top:1px solid #333;margin:1.5rem 0}
+</style>
+</head>
+<body>
+<main>
+  <h1>Stream admin</h1>
+  <p class="muted" id="current">Current: loading…</p>
+
+  <form id="f" autocomplete="off">
+    <label for="url">YouTube URL</label>
+    <input id="url" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…" >
+    <small>Optional when setting “interrupted” (the previous URL is kept).</small>
+
+    <label for="status">Status</label>
+    <select id="status">
+      <option value="live">live (redirect viewers)</option>
+      <option value="interrupted">interrupted (show waiting message)</option>
+    </select>
+
+    <label for="token">Access token</label>
+    <input id="token" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
+    <div class="row"><input id="remember" type="checkbox"><label for="remember" style="margin:0;font-weight:400">Remember on this device</label>
+      <button type="button" class="link" id="forget">Forget saved token</button></div>
+    <small>Fine-grained token for this one repo only, permission “Contents: Read and write”. Never shared with anyone except api.github.com.</small>
+
+    <button id="go" type="submit">Update stream</button>
+  </form>
+  <div id="result" role="status" aria-live="polite"></div>
+
+  <hr>
+  <p class="muted">No token? While logged into GitHub, use
+    <a id="fallback" href="#" target="_blank" rel="noopener">Actions → “Update stream” → Run workflow</a>
+    and fill in the same two fields.</p>
+</main>
+<script>
+(function () {
+  'use strict';
+  // ---- Config -------------------------------------------------------------
+  // Leave empty to auto-detect from <owner>.github.io/<repo>/ . Set these when
+  // using a custom domain (CNAME), where the hostname no longer reveals them.
+  var CONFIG = { owner: 'riannom', repo: 'nomura_html' };  // empty strings = auto-detect from *.github.io URL
+  var WORKFLOW_FILE = 'update-stream.yml';
+  var EVENT_TYPE = 'update-stream';
+  var TOKEN_KEY = 'stream-admin-token';
+  // -------------------------------------------------------------------------
+
+  function detectRepo() {
+    if (CONFIG.owner && CONFIG.repo) return CONFIG;
+    var h = location.hostname.toLowerCase();
+    var m = h.match(/^([a-z0-9-]+)\.github\.io$/);
+    if (!m) return null;
+    var first = location.pathname.split('/').filter(Boolean)[0];
+    // A user/org site (<owner>.github.io repo) is served at the root.
+    var repo = (first && !/\.html?$/.test(first)) ? first : m[1] + '.github.io';
+    return { owner: m[1], repo: repo };
+  }
+
+  var ALLOWED_HOSTS = ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'];
+  function validYouTubeUrl(raw) {
+    if (raw.length > 500) return false;
+    if (!/^https:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\/[A-Za-z0-9._~:\/?#@!$&()*+,;=%-]*$/.test(raw)) return false;
+    try { var u = new URL(raw); } catch (e) { return false; }
+    return u.protocol === 'https:' && !u.username && !u.password && !u.port &&
+           ALLOWED_HOSTS.indexOf(u.hostname) !== -1;
+  }
+
+  var $ = function (id) { return document.getElementById(id); };
+  var repo = detectRepo();
+  var result = $('result');
+  function show(ok, text) { result.className = ok ? 'ok' : 'err'; result.textContent = text; }
+
+  if (repo) {
+    $('fallback').href = 'https://github.com/' + encodeURIComponent(repo.owner) + '/' +
+      encodeURIComponent(repo.repo) + '/actions/workflows/' + WORKFLOW_FILE;
+  } else {
+    $('fallback').removeAttribute('href');
+    show(false, 'Repository not configured: set CONFIG.owner and CONFIG.repo at the top of admin.html.');
+  }
+
+  try {
+    var saved = localStorage.getItem(TOKEN_KEY);
+    if (saved) { $('token').value = saved; $('remember').checked = true; }
+  } catch (e) { /* storage disabled */ }
+
+  $('forget').onclick = function () {
+    try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+    $('token').value = ''; $('remember').checked = false;
+    show(true, 'Saved token removed from this device.');
+  };
+
+  fetch('stream.json?t=' + Date.now(), { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      $('current').textContent = 'Current: ' + d.status + ' · ' + d.url + ' · updated ' + d.updated;
+      if (d.url) $('url').value = d.url;
+    })
+    .catch(function () { $('current').textContent = 'Current: unavailable'; });
+
+  $('f').onsubmit = function (ev) {
+    ev.preventDefault();
+    var url = $('url').value.trim();
+    var status = $('status').value;
+    var token = $('token').value.trim();
+    if (!repo) return show(false, 'Repository not configured (see CONFIG in admin.html).');
+    if (status !== 'live' && status !== 'interrupted') return show(false, 'Pick a status.');
+    if (url && !validYouTubeUrl(url)) return show(false, 'That is not an https YouTube link (youtube.com or youtu.be).');
+    if (!url && status === 'live') return show(false, 'A YouTube URL is required when going live.');
+    if (!token) return show(false, 'Paste your access token (or use the Actions link below).');
+
+    try {
+      if ($('remember').checked) localStorage.setItem(TOKEN_KEY, token);
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch (e) {}
+
+    $('go').disabled = true;
+    show(true, 'Sending…');
+    fetch('https://api.github.com/repos/' + encodeURIComponent(repo.owner) + '/' + encodeURIComponent(repo.repo) + '/dispatches', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': 'Bearer ' + token,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ event_type: EVENT_TYPE, client_payload: { url: url, status: status } })
+    }).then(function (r) {
+      if (r.status === 204) {
+        show(true, 'Update accepted (' + status + ').\nGitHub is publishing it now; viewers switch within about a minute (deploy time + 30 s poll).');
+        return;
+      }
+      var hint = {
+        401: 'Token rejected: it is wrong, expired or revoked.',
+        403: 'Token lacks permission. It needs “Contents: Read and write” on this repository.',
+        404: 'Repository not found for this token. Check owner/repo and that the token includes this repository.',
+        422: 'GitHub rejected the request (validation failed).'
+      }[r.status] || 'Unexpected response from GitHub.';
+      return r.text().then(function (t) {
+        var detail = ''; try { detail = JSON.parse(t).message || ''; } catch (e) {}
+        show(false, 'Error ' + r.status + ': ' + hint + (detail ? '\nGitHub says: ' + detail : ''));
+      });
+    }).catch(function () {
+      show(false, 'Network error: could not reach api.github.com. Check your connection and try again.');
+    }).then(function () { $('go').disabled = false; });
+  };
+})();
+</script>
+</body>
+</html>

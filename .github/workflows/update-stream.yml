@@ -1,0 +1,101 @@
+name: Update stream
+
+on:
+  # Fired by admin.html: POST /repos/{owner}/{repo}/dispatches
+  repository_dispatch:
+    types: [update-stream]
+  # No-token fallback: Actions tab -> "Update stream" -> Run workflow
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "YouTube URL (https://www.youtube.com/... or https://youtu.be/...). Optional for 'interrupted'."
+        required: false
+        type: string
+      status:
+        description: "Stream status"
+        required: true
+        type: choice
+        options: [live, interrupted]
+        default: live
+  # Normal edits to main publish too
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+# One run at a time; queued runs wait (never cancel a half-done deploy).
+concurrency:
+  group: stream-update
+  cancel-in-progress: false
+
+jobs:
+  update-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Validate and write stream.json
+        if: github.event_name != 'push'
+        env:
+          # Inputs arrive via env only; never interpolated into the script.
+          IN_URL: ${{ github.event.client_payload.url || inputs.url }}
+          IN_STATUS: ${{ github.event.client_payload.status || inputs.status }}
+        run: |
+          set -euo pipefail
+          url="$IN_URL"
+          status="$IN_STATUS"
+          if [[ "$status" != "live" && "$status" != "interrupted" ]]; then
+            echo "::error::status must be 'live' or 'interrupted'"; exit 1
+          fi
+          if [[ -z "$url" && "$status" == "interrupted" ]]; then
+            url="$(jq -r '.url // ""' stream.json)"   # keep previous URL
+          fi
+          re='^https://(www\.|m\.)?(youtube\.com|youtu\.be)/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]*$'
+          if (( ${#url} > 500 )) || ! [[ "$url" =~ $re ]]; then
+            echo "::error::url must be an https youtube.com or youtu.be link"; exit 1
+          fi
+          old="$(jq -c '{url, status}' stream.json 2>/dev/null || echo '{}')"
+          new="$(jq -cn --arg url "$url" --arg status "$status" '{url: $url, status: $status}')"
+          if [[ "$old" == "$new" ]]; then
+            echo "No change in url/status; nothing to commit."
+            exit 0
+          fi
+          jq -n --arg url "$url" --arg status "$status" \
+                --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                '{url: $url, status: $status, updated: $updated}' > stream.json.tmp
+          mv stream.json.tmp stream.json
+          echo "stream.json is now:"; cat stream.json
+
+      - name: Commit if changed
+        if: github.event_name != 'push'
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- stream.json; then echo "Nothing to commit."; exit 0; fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add stream.json
+          git commit -m "Update stream: $(jq -r .status stream.json)"
+          git push || { git pull --rebase origin main && git push; }
+
+      - name: Stage site
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp index.html admin.html stream.json .nojekyll _site/
+          if [[ -f CNAME ]]; then cp CNAME _site/; fi
+
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+          include-hidden-files: true
+      - id: deploy
+        uses: actions/deploy-pages@v5
