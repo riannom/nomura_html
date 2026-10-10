@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Live</title>
 <script>
-  // YouTube channel ID (starts with "UC"). Find yours in YouTube Studio:
-  // Settings > Channel > Advanced settings. Change only this line.
+  // Fallback YouTube channel ID (starts with "UC"), used only when stream.json has no video.
+  // Find yours in YouTube Studio: Settings > Channel > Advanced settings.
   const CHANNEL_ID = "UCuElo0lPHVOnut0zSOM3oAw";
 </script>
 <style>
@@ -14,11 +14,12 @@
   .stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
   .frame { width: min(100vw, 177.78vh); aspect-ratio: 16 / 9; }
   .frame iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .msg { color: #ccc; font: 18px system-ui, sans-serif; text-align: center; padding: 1em; }
 </style>
 </head>
 <body>
 <div class="stage">
-  <div class="frame">
+  <div class="frame" id="frame">
     <iframe id="player"
       title="Live stream"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -27,8 +28,41 @@
   </div>
 </div>
 <script>
-  document.getElementById("player").src =
-    "https://www.youtube.com/embed/live_stream?channel=" + encodeURIComponent(CHANNEL_ID) + "&autoplay=1&mute=1";
+  const player = document.getElementById("player");
+  const PARAMS = "autoplay=1&mute=1&playsinline=1";
+  let current = "";
+
+  function videoId(url) {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.replace(/^(www\.|m\.)/, "");
+      if (host === "youtu.be") return u.pathname.slice(1).split("/")[0];
+      if (host !== "youtube.com") return "";
+      if (u.searchParams.get("v")) return u.searchParams.get("v");
+      const m = u.pathname.match(/^\/(?:live|embed|shorts)\/([\w-]{11})/);
+      return m ? m[1] : "";
+    } catch (e) { return ""; }
+  }
+
+  function show(src) {
+    if (src === current) return;
+    current = src;
+    player.src = src;
+  }
+
+  async function refresh() {
+    let src = "https://www.youtube.com/embed/live_stream?channel=" + encodeURIComponent(CHANNEL_ID) + "&" + PARAMS;
+    try {
+      const r = await fetch("stream.json?t=" + Date.now(), { cache: "no-store" });
+      const s = await r.json();
+      const id = videoId(s.url || "");
+      if (/^[\w-]{11}$/.test(id)) src = "https://www.youtube.com/embed/" + id + "?" + PARAMS;
+    } catch (e) {}
+    show(src);
+  }
+
+  refresh();
+  setInterval(refresh, 30000);
 </script>
 </body>
 </html>
