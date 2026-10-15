@@ -22,9 +22,10 @@
     noStreamMessage: "The live stream begins Saturday, October 17 at 10:00 AM HST.",
     // Scheduled start, ISO format WITH the UTC offset (Hawaii is -10:00),
     // e.g. "2026-10-10T14:00:00-10:00" for 2:00 PM Hawaii time.
-    // Leave "" if unknown (then the page simply shows the stream player, as before).
+    // Only used for the countdown text; the player itself appears only once YouTube reports the stream is live.
     startTime: "2026-10-17T10:00:00-10:00",
-    // Show YouTube's own small "waiting" player on this screen before the start (true or false).
+    // Only affects the ?preview=waiting test layout. Normal visitors never see the player
+    // until the stream is actually live (same look as when no URL is set).
     showWaitingPlayer: true,
     // While live, keep the small subtitle and title above the video (true or false).
     liveShowHeader: true,
@@ -233,8 +234,10 @@
   const PREVIEW_T0 = Date.now();
   const ERROR_CODES = [2, 5, 100, 101, 150, 153];
   const POLL_MS = 30000;
-  const FALLBACK_AFTER_START_MS = 2 * 60 * 1000;  // show full player anyway this long after startTime
-  const RETRY_ERRORED_MS = 60 * 1000;             // retry a source YouTube rejected after this long
+  const RETRY_ERRORED_MS = 60 * 1000;   // re-check a source that is not live (or YouTube rejected) after this long
+  const REPROBE_MS = 60 * 1000;         // reload a hidden probe that has not started playing after this long
+  const NOT_LIVE_CONFIRM_MS = 3000;     // PLAYING with isLive false for this long = replay/VOD, not live
+  const ENDED = 0;
   const PLAYING = 1, BUFFERING = 3;
 
   const START_MS = (function () {
@@ -251,7 +254,8 @@
 
   // Per loaded iframe
   let currentSrc = "", ytPlayer = null, loadToken = 0;
-  let confirmedLive = false;   // player reported PLAYING/BUFFERING of a live broadcast
+  let confirmedLive = false;   // player reported PLAYING/BUFFERING with isLive true
+  let notLiveSince = 0;        // when PLAYING with isLive false was first seen
   let playableSeen = false;    // player reported the video is playable
   let lastState = null;
   let wasErrored = false;      // this load is a retry of a source that errored
@@ -381,11 +385,17 @@
       // Only an explicit "not playable" signal hides the player; when unsure, keep it.
       if (d.isPlayable === false || (d.errorCode && d.errorCode !== 0)) { unplayable(); return; }
       if (d.isPlayable === true) playableSeen = true;
-      if (lastState === PLAYING || lastState === BUFFERING) {
-        playableSeen = true;
-        // Live broadcast is running. (An ended stream's replay also reaches PLAYING,
-        // but with isLive false, so before startTime that does not count.)
-        if (d.isLive === true || (START_MS !== null && Date.now() >= START_MS)) confirmedLive = true;
+      // Live detection (no API key): a hidden, muted probe player autoplays the URL.
+      // Upcoming/waiting-room streams never reach PLAYING; an ended stream's replay or a
+      // normal video reaches PLAYING with isLive false; a channel that is not live errors.
+      // Only PLAYING/BUFFERING with isLive true reveals the player.
+      if (lastState === ENDED) { confirmedLive = false; unplayable(); return; }
+      if ((lastState === PLAYING || lastState === BUFFERING) && d.isLive === true) {
+        playableSeen = true; confirmedLive = true; notLiveSince = 0;
+      } else if (lastState === PLAYING && d.isLive === false && !confirmedLive) {
+        // isLive can lag briefly right after start; require it to stay false.
+        if (!notLiveSince) { notLiveSince = Date.now(); setTimeout(() => inspectPlayer && inspectPlayer(), NOT_LIVE_CONFIRM_MS + 100); }
+        else if (Date.now() - notLiveSince >= NOT_LIVE_CONFIRM_MS) { notLiveSince = 0; unplayable(); return; }
       }
       document.body.dataset.ytIsLive = String(d.isLive);
       render();
@@ -408,7 +418,7 @@
   function clearPlayer() {
     loadToken++;
     ytPlayer = null; inspectPlayer = null; currentSrc = ""; lastState = null;
-    confirmedLive = false; playableSeen = false; wasErrored = false;
+    confirmedLive = false; playableSeen = false; wasErrored = false; notLiveSince = 0;
     frame.textContent = "";   // removes the iframe and stops playback
   }
 
@@ -432,14 +442,17 @@
 
   // ---- decide what to show ----
   function setMode(mode, reason) {
+    // "probe" = a hidden player is checking whether the stream is live; it looks
+    // exactly like "placeholder" (the no-URL screen).
     document.body.classList.toggle("mode-player", mode === "player");
-    document.body.dataset.state = mode;          // placeholder | waiting | player
+    document.body.dataset.state = mode === "probe" ? "placeholder" : mode;   // placeholder | waiting (preview) | player
+    document.body.dataset.probe = mode === "probe" ? "1" : "";
     document.body.dataset.reason = reason || "";
-    // No stream URL set yet: show the "begins on ..." text instead of the normal message.
-    elMessage.textContent = (reason === "no-url" && PLACEHOLDER.noStreamMessage) ? PLACEHOLDER.noStreamMessage : (PLACEHOLDER.message || "");
+    // Not live (no URL, not started, ended, error): always the "begins on ..." text.
+    elMessage.textContent = (mode !== "waiting" && PLACEHOLDER.noStreamMessage) ? PLACEHOLDER.noStreamMessage : (PLACEHOLDER.message || "");
     frame.hidden = mode === "placeholder";
     frame.classList.toggle("full", mode === "player");
-    frame.classList.toggle("invisible", mode === "waiting" && !PLACEHOLDER.showWaitingPlayer);
+    frame.classList.toggle("invisible", mode === "probe" || (mode === "waiting" && !PLACEHOLDER.showWaitingPlayer));
   }
 
   function render() {
@@ -450,8 +463,8 @@
     const src = s.src;
     if (src === currentSrc && errored[src]) { clearPlayer(); }   // just errored
     if (errored[src]) {
-      if (Date.now() - errored[src] < RETRY_ERRORED_MS) { setMode("placeholder", "youtube-error"); return; }
-      loadPlayer(src);               // retry; shown small until YouTube says it's playable
+      if (Date.now() - errored[src] < RETRY_ERRORED_MS) { setMode("placeholder", "not-live"); return; }
+      loadPlayer(src);               // re-check with a fresh hidden probe
     } else if (src !== currentSrc) {
       loadPlayer(src);               // unchanged src -> leave the iframe alone
     }
@@ -461,15 +474,8 @@
       setMode(live ? "player" : "waiting", "preview-" + PREVIEW);
       return;
     }
-    const now = Date.now();
-    // Without a known startTime, or 2 min after it, show the full player even if
-    // we could not confirm it is live (e.g. muted autoplay blocked): never hide a real stream.
-    const allowUnconfirmed = START_MS === null || now >= START_MS + FALLBACK_AFTER_START_MS;
     if (confirmedLive) { setMode("player", "confirmed-live"); return; }
-    if (allowUnconfirmed && (!wasErrored || playableSeen)) {
-      setMode("player", START_MS === null ? "no-start-time" : "start-time-fallback"); return;
-    }
-    setMode("waiting", wasErrored ? "retrying" : "before-start");
+    setMode("probe", wasErrored ? "rechecking" : "checking");
   }
 
   async function refresh() {
@@ -484,7 +490,7 @@
     if (!VIDEO_OVERRIDE && s && typeof s === "object" && !(typeof s.url === "string" && s.url.trim())) {
       // URL cleared on the admin page: placeholder only (no video, no channel fallback).
       lastStream = { mode: "placeholder", reason: "no-url" };
-    } else if (s && typeof s === "object" && s.status !== "live") {
+    } else if (!VIDEO_OVERRIDE && s && typeof s === "object" && s.status !== "live") {
       lastStream = { mode: "placeholder", reason: "status" };
     } else {
       const id = VIDEO_OVERRIDE || (s && typeof s.url === "string" ? videoId(s.url) : "");
@@ -495,11 +501,11 @@
       else lastStream = { mode: "placeholder", reason: "no-source" };
     }
 
-    // After startTime, while still waiting: cheap retry by reloading the small player
-    // every poll until it reaches PLAYING (YouTube's waiting room should also start by itself).
-    if (lastStream.mode === "video" && lastStream.src === currentSrc && START_MS !== null &&
-        Date.now() >= START_MS && !confirmedLive && document.body.dataset.state === "waiting" &&
-        lastState !== PLAYING && lastState !== BUFFERING && Date.now() - lastReload >= POLL_MS - 1000) {
+    // Hidden probe still not live (e.g. waiting room, autoplay stalled): reload it every
+    // REPROBE_MS so the player appears soon after the stream starts.
+    if (!PREVIEW && lastStream.mode === "video" && lastStream.src === currentSrc && !confirmedLive &&
+        document.body.dataset.probe === "1" && lastState !== PLAYING && lastState !== BUFFERING &&
+        Date.now() - lastReload >= REPROBE_MS - 1000) {
       loadPlayer(currentSrc);
     } else if (inspectPlayer && lastStream.mode === "video" && lastStream.src === currentSrc) {
       inspectPlayer();   // re-evaluate (e.g. startTime has now passed); calls render()
@@ -511,9 +517,6 @@
   refresh();
   setInterval(refresh, POLL_MS);
   if (PREVIEW === "transition") setTimeout(render, 8100);
-  // Re-evaluate exactly at the fallback moment rather than waiting for the next poll.
-  if (START_MS !== null && START_MS + FALLBACK_AFTER_START_MS > Date.now())
-    setTimeout(() => (inspectPlayer ? inspectPlayer() : render()), START_MS + FALLBACK_AFTER_START_MS - Date.now() + 500);
 </script>
 <script>
 // ---- Background lights: slow, soft points of light with faint threads ----
