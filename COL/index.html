@@ -83,6 +83,15 @@
     background: radial-gradient(circle, #2dd4bf 0%, #0d9488 45%, transparent 70%); animation: ph-d3 44s ease-in-out infinite alternate; }
   .ph-bg .g4 { width: 60vmax; height: 60vmax; right: -10vmax; bottom: -35vmax; opacity: .5;
     background: radial-gradient(circle, #2a1544 0%, #1a0f2e 60%, transparent 72%); animation: ph-d4 56s ease-in-out infinite alternate; }
+  /* Occasional shooting star (behind all content, never clickable) */
+  .ph-stars{overflow:hidden;pointer-events:none}
+  .ph-star{position:absolute;width:150px;height:1px;border-radius:1px;opacity:0;pointer-events:none;transform-origin:100% 50%;
+    background:linear-gradient(90deg,rgba(255,255,255,0),rgba(221,214,254,.35) 60%,rgba(255,255,255,.9));
+    box-shadow:0 0 6px rgba(221,214,254,.35);animation:ph-star 1s ease-out forwards}
+  @keyframes ph-star{0%{opacity:0;transform:rotate(var(--a)) translateX(0)}15%{opacity:.85}70%{opacity:.6}
+    100%{opacity:0;transform:rotate(var(--a)) translateX(var(--d))}}
+  @media (prefers-reduced-motion:reduce){.ph-stars{display:none}}
+  #placeholder > .ph-stars { position: absolute; inset: 0; z-index: 0; }
   /* Lights layer: soft points of light and faint threads (drawn by the script at the end) */
   #placeholder > #lights { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; pointer-events: none; }
   #placeholder > .ph-vignette { position: absolute; inset: 0; z-index: 0; pointer-events: none;
@@ -201,6 +210,7 @@
 <div id="placeholder">
   <div class="ph-bg" aria-hidden="true"><i class="g1"></i><i class="g2"></i><i class="g3"></i><i class="g4"></i></div>
   <div class="ph-vignette" aria-hidden="true"></div>
+  <div class="ph-stars" aria-hidden="true"></div>
   <canvas id="lights" aria-hidden="true"></canvas>
   <button id="fs-btn" type="button" aria-label="Full screen" title="Full screen">
     <svg class="ic-enter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
@@ -675,6 +685,49 @@
   document.addEventListener("webkitfullscreenchange", onResize);
   document.addEventListener("visibilitychange", function () { if (document.hidden) stop(); else start(); });
   start();
+})();
+</script>
+<script>
+// Occasional shooting star: one streak every 8-20 s, about 1 s long. No loop; off for reduced motion; paused while hidden.
+(function () {
+  "use strict";
+  var box = document.querySelector(".ph-stars");
+  if (!box || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches)) return;
+  var t = 0;
+  function shoot(opt) {
+    // Random path: start on the top edge or an upper side edge, head down at 15-45 deg,
+    // left-to-right or right-to-left, with random length, tail and duration; stays mostly in view.
+    opt = opt || {};
+    var w = box.clientWidth, h = box.clientHeight, R = Math.random;
+    var ltr = opt.ltr != null ? opt.ltr : R() < 0.5;
+    var deg = opt.deg != null ? opt.deg : 15 + R() * 30;
+    var x, y;
+    if (opt.x != null) { x = opt.x * w; y = opt.y * h; }
+    else if (R() < 0.6) { x = (ltr ? 0.05 + R() * 0.55 : 0.4 + R() * 0.55) * w; y = R() * 0.05 * h; }   // top edge
+    else { x = ltr ? 0 : w; y = (0.05 + R() * 0.35) * h; }                                            // upper side edge
+    var rad = deg * Math.PI / 180, dx = Math.cos(rad), dy = Math.sin(rad);
+    var room = Math.min((ltr ? w - x : x) / dx, (h - y) / dy);                                       // distance to the edge
+    var d = Math.max(120, Math.min(room * 0.9, 220 + R() * 330));
+    var tail = Math.round(70 + R() * 110), dur = (0.7 + R() * 0.7).toFixed(2);
+    var s = document.createElement("i");
+    s.className = "ph-star";
+    s.style.width = tail + "px";
+    s.style.left = (x - tail) + "px";                 // head (right end, the transform origin) sits at (x, y)
+    s.style.top = y + "px";
+    s.style.animationDuration = dur + "s";
+    s.style.setProperty("--a", (ltr ? deg : 180 - deg) + "deg");
+    s.style.setProperty("--d", Math.round(d) + "px");
+    s.addEventListener("animationend", function () { s.remove(); });
+    box.appendChild(s);
+    return s;
+  }
+  function schedule() {
+    clearTimeout(t);
+    t = setTimeout(function () { if (!document.hidden) { shoot(); schedule(); } }, 8000 + Math.random() * 12000);
+  }
+  document.addEventListener("visibilitychange", function () { if (document.hidden) clearTimeout(t); else schedule(); });
+  window.__phShootStar = shoot;   // test hook only
+  schedule();
 })();
 </script>
 </body>

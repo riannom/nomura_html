@@ -34,8 +34,41 @@
   #livetoggle{margin-top:.6rem}
   #livetoggle.on{background:#2a7d4a}
   body{transition:background-color .3s}
-  body.is-live{background:#1f1012}
-  body.not-live{background:#18171a}
+  /* Background: same dusk light as COL/index.html (.ph-bg blobs + vignette), then a faint status tint */
+  body{background:#000;min-height:100vh}
+  .ph-bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;filter:blur(80px)}
+  .ph-bg i{position:absolute;display:block;border-radius:50%;will-change:transform}
+  .ph-bg .g1{width:75vmax;height:75vmax;left:-25vmax;top:-30vmax;opacity:.55;
+    background:radial-gradient(circle,#3b1f5c 0%,#2a1544 55%,transparent 70%);animation:ph-d1 52s ease-in-out infinite alternate}
+  .ph-bg .g2{width:55vmax;height:55vmax;right:-22vmax;top:5vmax;opacity:.26;
+    background:radial-gradient(circle,#7c3aed 0%,#4c1d95 50%,transparent 70%);animation:ph-d2 60s ease-in-out infinite alternate}
+  .ph-bg .g3{width:40vmax;height:40vmax;left:20vmax;bottom:-24vmax;opacity:.28;
+    background:radial-gradient(circle,#2dd4bf 0%,#0d9488 45%,transparent 70%);animation:ph-d3 44s ease-in-out infinite alternate}
+  .ph-bg .g4{width:60vmax;height:60vmax;right:-10vmax;bottom:-35vmax;opacity:.5;
+    background:radial-gradient(circle,#2a1544 0%,#1a0f2e 60%,transparent 72%);animation:ph-d4 56s ease-in-out infinite alternate}
+  .ph-vignette,#tint{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .ph-vignette{background:radial-gradient(ellipse at center,transparent 35%,rgba(6,3,12,.6) 100%)}
+  #tint{transition:background-color .3s}
+  body.is-live #tint{background:rgba(220,38,38,.14)}
+  body.not-live #tint{background:rgba(150,150,160,.10)}
+  @keyframes ph-d1{to{transform:translate(14vw,10vh) scale(1.1)}}
+  @keyframes ph-d2{to{transform:translate(-12vw,14vh) scale(.92)}}
+  @keyframes ph-d3{to{transform:translate(-16vw,-10vh) scale(1.15)}}
+  @keyframes ph-d4{to{transform:translate(-10vw,-8vh) scale(1.08)}}
+  @media (prefers-reduced-motion:reduce){.ph-bg i{animation:none}}
+  /* Occasional shooting star (behind all content, never clickable) */
+  .ph-stars{overflow:hidden;pointer-events:none}
+  .ph-star{position:absolute;width:150px;height:1px;border-radius:1px;opacity:0;pointer-events:none;transform-origin:100% 50%;
+    background:linear-gradient(90deg,rgba(255,255,255,0),rgba(221,214,254,.35) 60%,rgba(255,255,255,.9));
+    box-shadow:0 0 6px rgba(221,214,254,.35);animation:ph-star 1s ease-out forwards}
+  @keyframes ph-star{0%{opacity:0;transform:rotate(var(--a)) translateX(0)}15%{opacity:.85}70%{opacity:.6}
+    100%{opacity:0;transform:rotate(var(--a)) translateX(var(--d))}}
+  @media (prefers-reduced-motion:reduce){.ph-stars{display:none}}
+  .ph-stars{position:fixed;inset:0;z-index:0}
+  main{position:relative;z-index:1}
+  #panel{padding:1rem 1.25rem 1.25rem;border-radius:.9rem;background:rgba(15,12,22,.72);border:1px solid rgba(167,139,250,.18);
+    box-shadow:0 10px 40px rgba(0,0,0,.45);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+  h1{font-family:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;font-weight:400;font-size:1.7rem;letter-spacing:.01em;text-shadow:0 0 28px rgba(124,58,237,.25)}
   #badge{display:none;margin:0 0 1rem;padding:.6rem;border-radius:.5rem;text-align:center;font-size:1.3rem;font-weight:800;letter-spacing:.15em}
   body.is-live #badge{display:block;background:#c62828;color:#fff}
   body.not-live #badge{display:block;background:#3a3a40;color:#eee;border:1px solid #666}
@@ -43,7 +76,12 @@
 </style>
 </head>
 <body>
+<div class="ph-bg" aria-hidden="true"><i class="g1"></i><i class="g2"></i><i class="g3"></i><i class="g4"></i></div>
+<div class="ph-vignette" aria-hidden="true"></div>
+<div class="ph-stars" aria-hidden="true"></div>
+<div id="tint" aria-hidden="true"></div>
 <main>
+ <div id="panel">
   <h1>Stream admin</h1>
   <div id="badge" role="status" aria-live="polite"></div>
   <p class="muted" id="current">Current: loading…</p>
@@ -82,6 +120,7 @@
   <p class="muted">No token? While logged into GitHub, use
     <a id="fallback" href="#" target="_blank" rel="noopener">Actions → “Update stream” → Run workflow</a>
     and fill in the same two fields.</p>
+ </div>
 </main>
 <script>
 (function () {
@@ -281,6 +320,49 @@
     }).then(function () { $('go').disabled = $('clear').disabled = $('livetoggle').disabled = false; });
     return true;
   }
+})();
+</script>
+<script>
+// Occasional shooting star: one streak every 8-20 s, about 1 s long. No loop; off for reduced motion; paused while hidden.
+(function () {
+  "use strict";
+  var box = document.querySelector(".ph-stars");
+  if (!box || (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches)) return;
+  var t = 0;
+  function shoot(opt) {
+    // Random path: start on the top edge or an upper side edge, head down at 15-45 deg,
+    // left-to-right or right-to-left, with random length, tail and duration; stays mostly in view.
+    opt = opt || {};
+    var w = box.clientWidth, h = box.clientHeight, R = Math.random;
+    var ltr = opt.ltr != null ? opt.ltr : R() < 0.5;
+    var deg = opt.deg != null ? opt.deg : 15 + R() * 30;
+    var x, y;
+    if (opt.x != null) { x = opt.x * w; y = opt.y * h; }
+    else if (R() < 0.6) { x = (ltr ? 0.05 + R() * 0.55 : 0.4 + R() * 0.55) * w; y = R() * 0.05 * h; }   // top edge
+    else { x = ltr ? 0 : w; y = (0.05 + R() * 0.35) * h; }                                            // upper side edge
+    var rad = deg * Math.PI / 180, dx = Math.cos(rad), dy = Math.sin(rad);
+    var room = Math.min((ltr ? w - x : x) / dx, (h - y) / dy);                                       // distance to the edge
+    var d = Math.max(120, Math.min(room * 0.9, 220 + R() * 330));
+    var tail = Math.round(70 + R() * 110), dur = (0.7 + R() * 0.7).toFixed(2);
+    var s = document.createElement("i");
+    s.className = "ph-star";
+    s.style.width = tail + "px";
+    s.style.left = (x - tail) + "px";                 // head (right end, the transform origin) sits at (x, y)
+    s.style.top = y + "px";
+    s.style.animationDuration = dur + "s";
+    s.style.setProperty("--a", (ltr ? deg : 180 - deg) + "deg");
+    s.style.setProperty("--d", Math.round(d) + "px");
+    s.addEventListener("animationend", function () { s.remove(); });
+    box.appendChild(s);
+    return s;
+  }
+  function schedule() {
+    clearTimeout(t);
+    t = setTimeout(function () { if (!document.hidden) { shoot(); schedule(); } }, 8000 + Math.random() * 12000);
+  }
+  document.addEventListener("visibilitychange", function () { if (document.hidden) clearTimeout(t); else schedule(); });
+  window.__phShootStar = shoot;   // test hook only
+  schedule();
 })();
 </script>
 </body>
