@@ -147,9 +147,39 @@
       b.setAttribute('aria-pressed', String(b.getAttribute('data-value') === v));
     });
   }
+  // One click + confirm: sends the same request as Update stream. Selection changes only on success.
+  var STATUS_CONFIRM = {
+    live: 'Set status to LIVE and send viewers to the stream now?',
+    interrupted: 'Show the waiting message ("interrupted") to viewers now?'
+  };
   Array.prototype.forEach.call($('status').querySelectorAll('button'), function (b) {
-    b.onclick = function () { setStatus(b.getAttribute('data-value')); };
+    b.onclick = function () {
+      var v = b.getAttribute('data-value');
+      var url = $('url').value.trim();
+      if (url && !validYouTubeUrl(url)) return show(false, 'That is not an https YouTube link (youtube.com or youtu.be).');
+      if (!url && v === 'live') return show(false, 'A YouTube URL is required when going live.');
+      if (!$('token').value.trim()) return show(false, 'Paste your access token (or use the Actions link below).');
+      if (!window.confirm(STATUS_CONFIRM[v])) return;
+      send({ url: url, status: v }, 'Update accepted (' + v + ').');
+    };
   });
+
+  // What stream.json holds (from load, then updated after each successful action).
+  var cur = null;
+  function showCurrent() {
+    if (!cur) return;
+    $('current').textContent = 'Current: ' + cur.status + (cur.live === false ? ' (Not Live)' : '') + ' · ' + (cur.url || '(no URL)') + ' · updated ' + cur.updated;
+  }
+  function applySent(p) {
+    cur = cur || {};
+    cur.status = p.status;
+    if (p.clear) cur.url = ''; else if (p.url) cur.url = p.url;
+    if (p.live === 'true' || p.live === 'false') cur.live = p.live === 'true';
+    cur.updated = new Date().toISOString().replace(/\.\d+Z$/, 'Z') + ' (publishing)';
+    setStatus(cur.status);
+    showLive(cur.live !== false);
+    showCurrent();
+  }
 
   // Live / Not Live. stream.json "live": true | false; missing = Live (old behavior).
   var isLive = null;
@@ -169,21 +199,21 @@
     if (url && !validYouTubeUrl(url)) return show(false, 'That is not an https YouTube link (youtube.com or youtu.be).');
     if (goLive) {
       if (!url) return show(false, 'A YouTube URL is required when going live.');
-      setStatus('live');
-      showLive(true);
-      if (!send({ url: url, status: 'live', live: 'true' }, 'Go Live accepted.', null, function () { showLive(false); })) showLive(false);
+      send({ url: url, status: 'live', live: 'true' }, 'Go Live accepted.');
     } else {
-      showLive(false);
-      if (!send({ url: url, status: statusValue, live: 'false' }, 'Not Live accepted: viewers will see the placeholder.', null, function () { showLive(true); })) showLive(true);
+      if (!$('token').value.trim()) return show(false, 'Paste your access token (or use the Actions link below).');
+      if (!window.confirm('Set Not Live? Viewers will see the placeholder page instead of the stream.')) return;
+      send({ url: url, status: statusValue, live: 'false' }, 'Not Live accepted: viewers will see the placeholder.');
     }
   };
 
   fetch('stream.json?t=' + Date.now(), { cache: 'no-store' })
     .then(function (r) { return r.json(); })
     .then(function (d) {
+      cur = d;
       showLive(d.live !== false);
       if (d.status === 'live' || d.status === 'interrupted') setStatus(d.status);
-      $('current').textContent = 'Current: ' + d.status + (d.live === false ? ' (Not Live)' : '') + ' · ' + (d.url || '(no URL)') + ' · updated ' + d.updated;
+      showCurrent();
       if (d.url) $('url').value = d.url;
     })
     .catch(function () { $('current').textContent = 'Current: unavailable'; });
@@ -229,6 +259,7 @@
     }).then(function (r) {
       if (r.status === 204) {
         if (payload.clear) $('url').value = '';
+        applySent(payload);
         if (onOk) onOk();
         show(true, okText + '\nGitHub is publishing it now; viewers switch within about a minute (deploy time + 30 s poll).');
         return;
