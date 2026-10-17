@@ -24,12 +24,28 @@
   #result.err{display:block;background:#4a1515;color:#ffd0d0}
   small,.muted{color:#999}
   a{color:#8ab4f8}
+  .choices{display:flex;gap:.5rem}
+  .choices button{flex:1;margin-top:0;padding:.65rem .5rem;background:#1b1b1d;border:1px solid #444;color:#bbb;font-size:.95rem;font-weight:500}
+  .choices button[aria-pressed=true]{background:#e33;border-color:#e33;color:#fff;font-weight:700}
+  .choices button[aria-pressed=true]::before{content:"\2713  "}
+  #livebox{margin-top:.3rem;padding:.75rem;border:1px solid #444;border-radius:.5rem;background:#1b1b1d}
+  #livestate{font-weight:700}
+  #livestate.on{color:#7ee2a8}
+  #livetoggle{margin-top:.6rem}
+  #livetoggle.on{background:#2a7d4a}
+  body{transition:background-color .3s}
+  body.is-live{background:#1f1012}
+  body.not-live{background:#18171a}
+  #badge{display:none;margin:0 0 1rem;padding:.6rem;border-radius:.5rem;text-align:center;font-size:1.3rem;font-weight:800;letter-spacing:.15em}
+  body.is-live #badge{display:block;background:#c62828;color:#fff}
+  body.not-live #badge{display:block;background:#3a3a40;color:#eee;border:1px solid #666}
   hr{border:0;border-top:1px solid #333;margin:1.5rem 0}
 </style>
 </head>
 <body>
 <main>
   <h1>Stream admin</h1>
+  <div id="badge" role="status" aria-live="polite"></div>
   <p class="muted" id="current">Current: loading…</p>
 
   <form id="f" autocomplete="off">
@@ -38,16 +54,23 @@
     <small>Optional when setting “interrupted” (the previous URL is kept). To remove it entirely, use “Clear stream URL” below.</small>
 
     <label for="status">Status</label>
-    <select id="status">
-      <option value="live">live (redirect viewers)</option>
-      <option value="interrupted">interrupted (show waiting message)</option>
-    </select>
+    <div class="choices" id="status" role="group" aria-label="Status">
+      <button type="button" data-value="live" aria-pressed="true">live (redirect viewers)</button>
+      <button type="button" data-value="interrupted" aria-pressed="false">interrupted (show waiting message)</button>
+    </div>
 
     <label for="token">Access token</label>
     <input id="token" type="password" placeholder="github_pat_…" autocomplete="off" spellcheck="false">
     <div class="row"><input id="remember" type="checkbox"><label for="remember" style="margin:0;font-weight:400">Remember on this device</label>
       <button type="button" class="link" id="forget">Forget saved token</button></div>
     <small>Fine-grained token for this one repo only, permission “Contents: Read and write”. Never shared with anyone except api.github.com.</small>
+
+    <label>Viewer visibility</label>
+    <div id="livebox">
+      <div>Now: <span id="livestate">loading…</span></div>
+      <small>While <b>Not Live</b>, viewers see the placeholder page even if a URL is saved, so you can stage the URL ahead of time. <b>Update stream</b> keeps this setting as it is.</small>
+      <button id="livetoggle" type="button">Go Live</button>
+    </div>
 
     <button id="go" type="submit">Update stream</button>
     <button id="clear" type="button" class="secondary">Clear stream URL</button>
@@ -116,10 +139,51 @@
     show(true, 'Saved token removed from this device.');
   };
 
+  // Status buttons (replace the old drop-down). The selected one has aria-pressed="true".
+  var statusValue = 'live';
+  function setStatus(v) {
+    statusValue = v;
+    Array.prototype.forEach.call($('status').querySelectorAll('button'), function (b) {
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-value') === v));
+    });
+  }
+  Array.prototype.forEach.call($('status').querySelectorAll('button'), function (b) {
+    b.onclick = function () { setStatus(b.getAttribute('data-value')); };
+  });
+
+  // Live / Not Live. stream.json "live": true | false; missing = Live (old behavior).
+  var isLive = null;
+  function showLive(v) {
+    isLive = v;
+    $('livestate').textContent = v ? 'Live (viewers see the stream)' : 'Not Live (viewers see the placeholder)';
+    $('livestate').className = v ? 'on' : '';
+    $('livetoggle').textContent = v ? 'Set Not Live' : 'Go Live';
+    $('livetoggle').className = v ? '' : 'on';
+    document.body.classList.toggle('is-live', v);
+    document.body.classList.toggle('not-live', !v);
+    $('badge').textContent = v ? '\u25CF LIVE' : 'NOT LIVE';
+  }
+  $('livetoggle').onclick = function () {
+    var goLive = !isLive;
+    var url = $('url').value.trim();
+    if (url && !validYouTubeUrl(url)) return show(false, 'That is not an https YouTube link (youtube.com or youtu.be).');
+    if (goLive) {
+      if (!url) return show(false, 'A YouTube URL is required when going live.');
+      setStatus('live');
+      showLive(true);
+      if (!send({ url: url, status: 'live', live: 'true' }, 'Go Live accepted.', null, function () { showLive(false); })) showLive(false);
+    } else {
+      showLive(false);
+      if (!send({ url: url, status: statusValue, live: 'false' }, 'Not Live accepted: viewers will see the placeholder.', null, function () { showLive(true); })) showLive(true);
+    }
+  };
+
   fetch('stream.json?t=' + Date.now(), { cache: 'no-store' })
     .then(function (r) { return r.json(); })
     .then(function (d) {
-      $('current').textContent = 'Current: ' + d.status + ' · ' + (d.url || '(no URL)') + ' · updated ' + d.updated;
+      showLive(d.live !== false);
+      if (d.status === 'live' || d.status === 'interrupted') setStatus(d.status);
+      $('current').textContent = 'Current: ' + d.status + (d.live === false ? ' (Not Live)' : '') + ' · ' + (d.url || '(no URL)') + ' · updated ' + d.updated;
       if (d.url) $('url').value = d.url;
     })
     .catch(function () { $('current').textContent = 'Current: unavailable'; });
@@ -127,7 +191,7 @@
   $('f').onsubmit = function (ev) {
     ev.preventDefault();
     var url = $('url').value.trim();
-    var status = $('status').value;
+    var status = statusValue;
     if (status !== 'live' && status !== 'interrupted') return show(false, 'Pick a status.');
     if (url && !validYouTubeUrl(url)) return show(false, 'That is not an https YouTube link (youtube.com or youtu.be).');
     if (!url && status === 'live') return show(false, 'A YouTube URL is required when going live.');
@@ -140,17 +204,18 @@
     send({ url: '', status: 'interrupted', clear: true }, 'Clear accepted: the stream URL is being removed.');
   };
 
-  function send(payload, okText) {
+  // Returns true once the request is sent; onFail runs if GitHub rejects it.
+  function send(payload, okText, onOk, onFail) {
     var token = $('token').value.trim();
-    if (!repo) return show(false, 'Repository not configured (see CONFIG in admin.html).');
-    if (!token) return show(false, 'Paste your access token (or use the Actions link below).');
+    if (!repo) { show(false, 'Repository not configured (see CONFIG in admin.html).'); return false; }
+    if (!token) { show(false, 'Paste your access token (or use the Actions link below).'); return false; }
 
     try {
       if ($('remember').checked) localStorage.setItem(TOKEN_KEY, token);
       else localStorage.removeItem(TOKEN_KEY);
     } catch (e) {}
 
-    $('go').disabled = $('clear').disabled = true;
+    $('go').disabled = $('clear').disabled = $('livetoggle').disabled = true;
     show(true, 'Sending…');
     fetch('https://api.github.com/repos/' + encodeURIComponent(repo.owner) + '/' + encodeURIComponent(repo.repo) + '/dispatches', {
       method: 'POST',
@@ -164,6 +229,7 @@
     }).then(function (r) {
       if (r.status === 204) {
         if (payload.clear) $('url').value = '';
+        if (onOk) onOk();
         show(true, okText + '\nGitHub is publishing it now; viewers switch within about a minute (deploy time + 30 s poll).');
         return;
       }
@@ -173,13 +239,16 @@
         404: 'Repository not found for this token. Check owner/repo and that the token includes this repository.',
         422: 'GitHub rejected the request (validation failed).'
       }[r.status] || 'Unexpected response from GitHub.';
+      if (onFail) onFail();
       return r.text().then(function (t) {
         var detail = ''; try { detail = JSON.parse(t).message || ''; } catch (e) {}
         show(false, 'Error ' + r.status + ': ' + hint + (detail ? '\nGitHub says: ' + detail : ''));
       });
     }).catch(function () {
+      if (onFail) onFail();
       show(false, 'Network error: could not reach api.github.com. Check your connection and try again.');
-    }).then(function () { $('go').disabled = $('clear').disabled = false; });
+    }).then(function () { $('go').disabled = $('clear').disabled = $('livetoggle').disabled = false; });
+    return true;
   }
 })();
 </script>

@@ -22,6 +22,12 @@ on:
         type: choice
         options: [live, interrupted]
         default: live
+      live:
+        description: "Viewer visibility: 'true' = Live (show the stream), 'false' = Not Live (placeholder even with a URL), 'keep' = unchanged"
+        required: false
+        type: choice
+        options: [keep, "true", "false"]
+        default: keep
   # Normal edits to main publish too
   push:
     branches: [main]
@@ -54,6 +60,7 @@ jobs:
           IN_URL: ${{ github.event.client_payload.url || inputs.url }}
           IN_STATUS: ${{ github.event.client_payload.status || inputs.status }}
           IN_CLEAR: ${{ github.event.client_payload.clear || inputs.clear }}
+          IN_LIVE: ${{ github.event.client_payload.live || inputs.live }}
         run: |
           set -euo pipefail
           url="$IN_URL"
@@ -76,15 +83,20 @@ jobs:
               echo "::error::url must be an https youtube.com or youtu.be link (or use clear)"; exit 1
             fi
           fi
-          old="$(jq -c '{url, status}' COL/stream.json 2>/dev/null || echo '{}')"
-          new="$(jq -cn --arg url "$url" --arg status "$status" '{url: $url, status: $status}')"
+          # live: "true"/"false" sets it; anything else keeps the previous value (absent stays absent).
+          live="$IN_LIVE"
+          if [[ "$live" != "true" && "$live" != "false" ]]; then
+            live="$(jq -r 'if has("live") then (.live | tostring) else "" end' COL/stream.json 2>/dev/null || echo '')"
+          fi
+          old="$(jq -c '{url, status, live}' COL/stream.json 2>/dev/null || echo '{}')"
+          new="$(jq -cn --arg url "$url" --arg status "$status" --arg live "$live" '{url: $url, status: $status, live: (if $live == "" then null else ($live == "true") end)}')"
           if [[ "$old" == "$new" ]]; then
-            echo "No change in url/status; nothing to commit."
+            echo "No change in url/status/live; nothing to commit."
             exit 0
           fi
-          jq -n --arg url "$url" --arg status "$status" \
+          jq -n --arg url "$url" --arg status "$status" --arg live "$live" \
                 --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                '{url: $url, status: $status, updated: $updated}' > COL/stream.json.tmp
+                '{url: $url, status: $status} + (if $live == "" then {} else {live: ($live == "true")} end) + {updated: $updated}' > COL/stream.json.tmp
           mv COL/stream.json.tmp COL/stream.json
           echo "COL/stream.json is now:"; cat COL/stream.json
 
@@ -96,7 +108,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add COL/stream.json
-          git commit -m "Update stream: $(jq -r 'if .url == "" then .status + " (url cleared)" else .status end' COL/stream.json)"
+          git commit -m "Update stream: $(jq -r 'if .url == "" then .status + " (url cleared)" else .status end + (if .live == false then ", not live" elif .live == true then ", live on" else "" end)' COL/stream.json)"
           git push || { git pull --rebase origin main && git push; }
 
       - name: Stage site

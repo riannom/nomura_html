@@ -490,8 +490,9 @@
     if (!VIDEO_OVERRIDE && s && typeof s === "object" && !(typeof s.url === "string" && s.url.trim())) {
       // URL cleared on the admin page: placeholder only (no video, no channel fallback).
       lastStream = { mode: "placeholder", reason: "no-url" };
-    } else if (!VIDEO_OVERRIDE && s && typeof s === "object" && s.status !== "live") {
-      lastStream = { mode: "placeholder", reason: "status" };
+    } else if (!VIDEO_OVERRIDE && s && typeof s === "object" && (s.status !== "live" || s.live === false)) {
+      // status "interrupted", or staged as Not Live (live: false). A missing "live" behaves as before.
+      lastStream = { mode: "placeholder", reason: s.live === false ? "not-live" : "status" };
     } else {
       const id = VIDEO_OVERRIDE || (s && typeof s.url === "string" ? videoId(s.url) : "");
       if (validId(id)) lastStream = { mode: "video", src: "https://www.youtube.com/embed/" + id + "?" + PARAMS };
