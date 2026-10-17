@@ -20,7 +20,7 @@ on:
         description: "Stream status"
         required: true
         type: choice
-        options: [live, interrupted]
+        options: [live, interrupted, ended]
         default: live
       live:
         description: "Viewer visibility: 'true' = Live (show the stream), 'false' = Not Live (placeholder even with a URL), 'keep' = unchanged"
@@ -65,13 +65,13 @@ jobs:
           set -euo pipefail
           url="$IN_URL"
           status="$IN_STATUS"
-          if [[ "$status" != "live" && "$status" != "interrupted" ]]; then
-            echo "::error::status must be 'live' or 'interrupted'"; exit 1
+          if [[ "$status" != "live" && "$status" != "interrupted" && "$status" != "ended" ]]; then
+            echo "::error::status must be 'live', 'interrupted' or 'ended'"; exit 1
           fi
           if [[ "$IN_CLEAR" == "true" ]]; then
             url=""                                          # explicit clear: empty url, nothing to validate
           else
-            if [[ -z "$url" && "$status" == "interrupted" ]]; then
+            if [[ -z "$url" && ( "$status" == "interrupted" || "$status" == "ended" ) ]]; then
               url="$(jq -r '.url // ""' COL/stream.json)"   # keep previous URL (may already be cleared)
             elif [[ -z "$url" ]]; then
               echo "::error::url is required for 'live' (to empty it, use clear)"; exit 1

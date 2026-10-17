@@ -20,6 +20,8 @@
     message: "The live stream will begin shortly. Please keep this page open; it will switch to the stream automatically.",
     // Text shown instead of "message" while no stream URL is set (cleared on the admin page).
     noStreamMessage: "The live stream begins Saturday, October 17 at 10:00 AM HST.",
+    // Text shown when the admin page sets the stream to "ended" (no countdown, no player).
+    endedMessage: "The livestream has ended. Thank you for joining us in celebrating Carolyn's life.",
     // Scheduled start, ISO format WITH the UTC offset (Hawaii is -10:00),
     // e.g. "2026-10-10T14:00:00-10:00" for 2:00 PM Hawaii time.
     // Only used for the countdown text; the player itself appears only once YouTube reports the stream is live.
@@ -181,6 +183,7 @@
     transition: flex-grow .9s cubic-bezier(.2,.7,.2,1), width .9s cubic-bezier(.2,.7,.2,1), margin .9s cubic-bezier(.2,.7,.2,1),
       font-size .9s cubic-bezier(.2,.7,.2,1), max-height .9s ease, opacity .6s ease, border-radius .9s ease; }
   #ph-start, #ph-countdown { max-height: 4em; }
+  body.is-ended #ph-start, body.is-ended #ph-countdown { display: none; }
   #ph-message, #ph-link { max-height: 12em; }
 
   /* ---- Live layout: compact header on top, large framed video below ---- */
@@ -502,7 +505,9 @@
     document.body.dataset.probe = mode === "probe" ? "1" : "";
     document.body.dataset.reason = reason || "";
     // Not live (no URL, not started, ended, error): always the "begins on ..." text.
-    elMessage.textContent = (mode !== "waiting" && PLACEHOLDER.noStreamMessage) ? PLACEHOLDER.noStreamMessage : (PLACEHOLDER.message || "");
+    document.body.classList.toggle("is-ended", reason === "ended");
+    elMessage.textContent = reason === "ended" ? (PLACEHOLDER.endedMessage || "") :
+      (mode !== "waiting" && PLACEHOLDER.noStreamMessage) ? PLACEHOLDER.noStreamMessage : (PLACEHOLDER.message || "");
     frame.hidden = mode === "placeholder";
     frame.classList.toggle("full", mode === "player");
     frame.classList.toggle("invisible", mode === "probe" || (mode === "waiting" && !PLACEHOLDER.showWaitingPlayer));
@@ -540,7 +545,10 @@
       if (r.ok) s = await r.json();
     } catch (e) { s = null; }
 
-    if (!VIDEO_OVERRIDE && s && typeof s === "object" && !(typeof s.url === "string" && s.url.trim())) {
+    if (s && typeof s === "object" && s.status === "ended") {
+      // Stream ended (admin page): end-of-stream placeholder, never a player, whatever "live" says.
+      lastStream = { mode: "placeholder", reason: "ended" };
+    } else if (!VIDEO_OVERRIDE && s && typeof s === "object" && !(typeof s.url === "string" && s.url.trim())) {
       // URL cleared on the admin page: placeholder only (no video, no channel fallback).
       lastStream = { mode: "placeholder", reason: "no-url" };
     } else if (!VIDEO_OVERRIDE && s && typeof s === "object" && (s.status !== "live" || s.live === false)) {

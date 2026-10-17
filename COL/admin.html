@@ -24,7 +24,8 @@
   #result.err{display:block;background:#4a1515;color:#ffd0d0}
   small,.muted{color:#999}
   a{color:#8ab4f8}
-  .choices{display:flex;gap:.5rem}
+  .choices{display:flex;flex-wrap:wrap;gap:.5rem}
+  .choices button{min-width:8.5rem}
   .choices button{flex:1;margin-top:0;padding:.65rem .5rem;background:#1b1b1d;border:1px solid #444;color:#bbb;font-size:.95rem;font-weight:500}
   .choices button[aria-pressed=true]{background:#e33;border-color:#e33;color:#fff;font-weight:700}
   .choices button[aria-pressed=true]::before{content:"\2713  "}
@@ -51,6 +52,8 @@
   #tint{transition:background-color .3s}
   body.is-live #tint{background:rgba(220,38,38,.14)}
   body.not-live #tint{background:rgba(150,150,160,.10)}
+  body.is-ended #tint{background:rgba(0,0,0,.35)}
+  body.is-ended #badge{display:block;background:#1f1f24;color:#d4d4d8;border:1px solid #52525b}
   @keyframes ph-d1{to{transform:translate(14vw,10vh) scale(1.1)}}
   @keyframes ph-d2{to{transform:translate(-12vw,14vh) scale(.92)}}
   @keyframes ph-d3{to{transform:translate(-16vw,-10vh) scale(1.15)}}
@@ -95,6 +98,7 @@
     <div class="choices" id="status" role="group" aria-label="Status">
       <button type="button" data-value="live" aria-pressed="true">live (redirect viewers)</button>
       <button type="button" data-value="interrupted" aria-pressed="false">interrupted (show waiting message)</button>
+      <button type="button" data-value="ended" aria-pressed="false">ended (show end-of-stream page)</button>
     </div>
 
     <label for="token">Access token</label>
@@ -185,11 +189,13 @@
     Array.prototype.forEach.call($('status').querySelectorAll('button'), function (b) {
       b.setAttribute('aria-pressed', String(b.getAttribute('data-value') === v));
     });
+    if (isLive !== null) showLive(isLive);   // banner shows ENDED for status "ended"
   }
   // One click + confirm: sends the same request as Update stream. Selection changes only on success.
   var STATUS_CONFIRM = {
     live: 'Set status to LIVE and send viewers to the stream now?',
-    interrupted: 'Show the waiting message ("interrupted") to viewers now?'
+    interrupted: 'Show the waiting message ("interrupted") to viewers now?',
+    ended: 'End the stream? Viewers will see the end-of-stream page.'
   };
   Array.prototype.forEach.call($('status').querySelectorAll('button'), function (b) {
     b.onclick = function () {
@@ -231,6 +237,9 @@
     document.body.classList.toggle('is-live', v);
     document.body.classList.toggle('not-live', !v);
     $('badge').textContent = v ? '\u25CF LIVE' : 'NOT LIVE';
+    var ended = statusValue === 'ended';
+    document.body.classList.toggle('is-ended', ended);
+    if (ended) { document.body.classList.remove('is-live', 'not-live'); $('badge').textContent = 'ENDED'; }
   }
   $('livetoggle').onclick = function () {
     var goLive = !isLive;
@@ -251,7 +260,7 @@
     .then(function (d) {
       cur = d;
       showLive(d.live !== false);
-      if (d.status === 'live' || d.status === 'interrupted') setStatus(d.status);
+      if (d.status === 'live' || d.status === 'interrupted' || d.status === 'ended') setStatus(d.status);
       showCurrent();
       if (d.url) $('url').value = d.url;
     })
@@ -261,7 +270,7 @@
     ev.preventDefault();
     var url = $('url').value.trim();
     var status = statusValue;
-    if (status !== 'live' && status !== 'interrupted') return show(false, 'Pick a status.');
+    if (status !== 'live' && status !== 'interrupted' && status !== 'ended') return show(false, 'Pick a status.');
     if (url && !validYouTubeUrl(url)) return show(false, 'That is not an https YouTube link (youtube.com or youtu.be).');
     if (!url && status === 'live') return show(false, 'A YouTube URL is required when going live.');
     send({ url: url, status: status }, 'Update accepted (' + status + ').');
