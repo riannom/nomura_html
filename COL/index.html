@@ -65,7 +65,7 @@
     position: fixed; inset: 0; box-sizing: border-box;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     padding: 5vmin 7vw; text-align: center; overflow: hidden;
-    --m: 1.25rem; --hdr: 6.6rem; --vh: 100vh;
+    --m: 1.25rem; --hdr: 6.6rem; --vh: 100vh; --bar: 3.6rem;
     transition: padding .9s cubic-bezier(.2,.7,.2,1);
     background-size: cover; background-position: center; background-repeat: no-repeat;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -147,6 +147,35 @@
   #frame.invisible { position: absolute; left: 0; top: 0; width: 320px; opacity: 0; pointer-events: none; margin: 0; z-index: 0; }
   #frame iframe { width: 100%; height: 100%; border: 0; display: block; }
 
+  /* Sound bar under the video: only while the player is shown */
+  #sound { display: none; flex: none; align-items: center; justify-content: center; gap: 1rem; box-sizing: border-box;
+    margin: .6rem 0 0; padding: .3rem .5rem; height: calc(var(--bar) - .6rem); max-width: 100%;
+    border-radius: 999px; background: rgba(20,12,34,.55); border: 1px solid rgba(167,139,250,.22);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); color: #ede9fe; font: inherit; }
+  body.mode-player #sound { display: flex; }
+  #snd-btn { display: flex; align-items: center; gap: .5rem; min-height: 2.6rem; min-width: 9.5rem; padding: 0 1.1rem;
+    border-radius: 999px; border: 1px solid rgba(45,212,191,.45); background: rgba(45,212,191,.10); color: inherit;
+    font: inherit; font-size: 1rem; letter-spacing: .04em; cursor: pointer; justify-content: center; }
+  #snd-btn[aria-pressed="false"] { border-color: rgba(251,191,36,.75); background: rgba(245,158,11,.18); color: #fde68a; }
+  #snd-btn:hover, #snd-btn:focus-visible, #snd-vol:focus-visible { outline: none; box-shadow: 0 0 0 2px #2dd4bf, 0 0 14px rgba(45,212,191,.35); }
+  #snd-btn svg { width: 1.2rem; height: 1.2rem; flex: none; }
+  #snd-btn .ic-off, #snd-btn[aria-pressed="false"] .ic-on { display: none; }
+  #snd-btn[aria-pressed="false"] .ic-off { display: block; }
+  #snd-vol { width: min(11rem, 34vw); height: 2.6rem; margin: 0; accent-color: #2dd4bf; cursor: pointer; background: transparent; }
+  body.ios #snd-vol { display: none; }
+  /* Muted overlay on the video (lower third); tap anywhere on it for sound */
+  #snd-ov { display: none; position: absolute; left: 0; right: 0; margin: 0 auto; width: max-content; bottom: 22%; z-index: 2;
+    align-items: center; gap: .7rem; max-width: calc(100% - 1.5rem); box-sizing: border-box; padding: .8rem 1.4rem;
+    border-radius: 999px; border: 1px solid rgba(251,191,36,.8); background: rgba(24,14,4,.78); color: #fde68a;
+    font: inherit; font-size: clamp(1rem, 3.4vw, 1.35rem); font-weight: 600; letter-spacing: .02em; cursor: pointer;
+    box-shadow: 0 0 0 0 rgba(251,191,36,.5), 0 8px 30px rgba(0,0,0,.5); animation: snd-pulse 2.2s ease-in-out infinite; }
+  #snd-ov svg { width: clamp(1.8rem, 6vw, 2.6rem); height: clamp(1.8rem, 6vw, 2.6rem); flex: none; }
+  #snd-ov:focus-visible { outline: 2px solid #fde68a; outline-offset: 3px; }
+  body.mode-player.snd-muted #snd-ov { display: flex; }
+  @keyframes snd-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(251,191,36,.45), 0 8px 30px rgba(0,0,0,.5); }
+    50% { box-shadow: 0 0 0 10px rgba(251,191,36,0), 0 8px 30px rgba(0,0,0,.5); } }
+  @media (prefers-reduced-motion: reduce) { #snd-ov { animation: none; } }
+
   /* Smooth changes between layouts */
   #placeholder > .sp, #frame, #ph-photo, #ph-kicker, #ph-title, #placeholder > .ph-line, #ph-live, #ph-start, #ph-countdown, #ph-message, #ph-link {
     transition: flex-grow .9s cubic-bezier(.2,.7,.2,1), width .9s cubic-bezier(.2,.7,.2,1), margin .9s cubic-bezier(.2,.7,.2,1),
@@ -167,7 +196,7 @@
   body.mode-player #ph-start, body.mode-player #ph-countdown, body.mode-player #ph-message, body.mode-player #ph-link {
     max-height: 0; opacity: 0; margin: 0; overflow: hidden; }
   body.mode-player #frame.full { margin: .8rem 0 0; border-radius: 12px;
-    width: min(100vw - 2 * var(--m), (var(--vh) - var(--hdr) - 2 * var(--m)) * 16 / 9); }
+    width: min(100vw - 2 * var(--m), (var(--vh) - var(--hdr) - var(--bar) - 2 * var(--m)) * 16 / 9); }
   /* Header hidden (config, or very short screens such as a phone in landscape) */
   body.mode-player.no-live-header #placeholder, body.is-fs.no-live-header #placeholder { --hdr: 0px; }
   body.mode-player.no-live-header #ph-kicker, body.mode-player.no-live-header #ph-title,
@@ -227,6 +256,18 @@
   <p id="ph-message"></p>
   <div class="sp sp-mid"></div>
   <div id="frame" hidden></div>
+  <button id="snd-ov" type="button" aria-label="Sound is off. Tap for sound">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>
+    <span>Sound is off. Tap for sound</span>
+  </button>
+  <div id="sound" role="group" aria-label="Sound">
+    <button id="snd-btn" type="button" aria-pressed="false" aria-label="Turn sound on">
+      <svg class="ic-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>
+      <svg class="ic-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>
+      <span id="snd-label">Tap for sound</span>
+    </button>
+    <input id="snd-vol" type="range" min="0" max="100" step="1" value="100" aria-label="Volume">
+  </div>
   <a id="ph-link" target="_blank" rel="noopener" hidden></a>
   <div class="sp sp-bot"></div>
 </div>
@@ -375,6 +416,7 @@
     document.head.appendChild(s);
   })();
 
+  window.__phPlayer = () => ytPlayer;   // read by the sound bar (and tests)
   function videoData() {
     try { return (ytPlayer && ytPlayer.getVideoData && ytPlayer.getVideoData()) || {}; } catch (e) { return {}; }
   }
@@ -429,7 +471,8 @@
     loadToken++;
     ytPlayer = null; inspectPlayer = null; currentSrc = ""; lastState = null;
     confirmedLive = false; playableSeen = false; wasErrored = false; notLiveSince = 0;
-    frame.textContent = "";   // removes the iframe and stops playback
+    // Removes the iframe and stops playback (keeps the sound overlay element).
+    Array.from(frame.children).forEach(n => { if (n.id !== "snd-ov") n.remove(); });
   }
 
   function loadPlayer(src) {
@@ -728,6 +771,56 @@
   document.addEventListener("visibilitychange", function () { if (document.hidden) clearTimeout(t); else schedule(); });
   window.__phShootStar = shoot;   // test hook only
   schedule();
+})();
+</script>
+<script>
+// Sound bar: drives the existing YT.Player (mute/unMute/isMuted/setVolume/getVolume) and polls
+// every 500 ms so it follows YouTube's own controls. Visible only in the player layout (CSS).
+(function () {
+  "use strict";
+  const ov = document.getElementById("snd-ov"), frameEl = document.getElementById("frame");
+  const btn = document.getElementById("snd-btn"), label = document.getElementById("snd-label"), vol = document.getElementById("snd-vol");
+  // iOS/iPadOS ignore setVolume; iPadOS can report itself as a Mac with touch.
+  const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (IOS) document.body.classList.add("ios");
+  let soundTouched = false, dragUntil = 0;
+  const p = () => { const y = window.__phPlayer && window.__phPlayer(); return y && typeof y.isMuted === "function" ? y : null; };
+  function sync() {
+    const y = p(); if (!y) return;
+    let muted, v;
+    try { muted = y.isMuted(); v = y.getVolume(); } catch (e) { return; }
+    if (typeof muted !== "boolean") return;
+    muted = muted || v === 0;                                   // volume 0 counts as muted
+    if (ov.parentNode !== frameEl) frameEl.appendChild(ov);    // the overlay lives on the video (re-added after reloads)
+    document.body.classList.toggle("snd-muted", muted);
+    btn.setAttribute("aria-pressed", String(!muted));
+    label.textContent = muted ? (soundTouched ? "Sound off" : "Tap for sound") : "Sound on";
+    btn.setAttribute("aria-label", muted ? "Sound is off. Turn sound on" : "Sound is on. Turn sound off");
+    if (typeof v === "number" && Date.now() > dragUntil) vol.value = String(Math.round(v));
+    vol.setAttribute("aria-valuetext", (muted ? "muted, " : "") + vol.value + "%");
+  }
+  function soundOn(y) { if (y.getVolume() === 0) { y.setVolume(50); vol.value = "50"; } y.unMute(); }
+  btn.addEventListener("click", function () {
+    const y = p(); if (!y) return;
+    soundTouched = true;
+    try { if (y.isMuted() || y.getVolume() === 0) soundOn(y); else y.mute(); } catch (e) {}
+    setTimeout(sync, 80);
+  });
+  ov.addEventListener("click", function () {
+    const y = p(); if (!y) return;
+    soundTouched = true;
+    try { soundOn(y); } catch (e) {}
+    document.body.classList.remove("snd-muted");
+    setTimeout(sync, 80);
+  });
+  vol.addEventListener("input", function () {
+    const y = p(); if (!y) return;
+    dragUntil = Date.now() + 800; soundTouched = true;
+    const v = Number(vol.value);
+    try { y.setVolume(v); if (v > 0 && y.isMuted()) y.unMute(); else if (v === 0) y.mute(); } catch (e) {}
+    setTimeout(sync, 80);
+  });
+  setInterval(function () { if (!document.hidden && document.body.classList.contains("mode-player")) sync(); }, 500);
 })();
 </script>
 </body>
